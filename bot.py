@@ -24,7 +24,7 @@ def is_admin(user_id: int) -> bool:
 
 def menu(user_id: int = 0):
     keyboard = [
-        [InlineKeyboardButton(text="🔎 Выбрать категорию юзов", callback_data="categories")],
+        [InlineKeyboardButton(text="🔎 Начать поиск юзов", callback_data="categories")],
         [InlineKeyboardButton(text="⭐ Premium", callback_data="premium"),
          InlineKeyboardButton(text="📦 Пакеты", callback_data="packs")],
         [InlineKeyboardButton(text="❤️ Поддержать", callback_data="support")],
@@ -35,14 +35,22 @@ def menu(user_id: int = 0):
         keyboard.insert(0, [InlineKeyboardButton(text="👑 Админ-панель", callback_data="admin_panel")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-def category_menu():
+def length_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="4 буквы ⭐ (Премиум)", callback_data="cat:4"),
-         InlineKeyboardButton(text="5 букв ⭐ (Премиум)", callback_data="cat:5")],
-        [InlineKeyboardButton(text="6 букв 🆓 (Бесплатно)", callback_data="cat:6")],
-        [InlineKeyboardButton(text="7 букв 🆓 (Бесплатно)", callback_data="cat:7")],
-        [InlineKeyboardButton(text="8-10 букв 🆓 (Бесплатно)", callback_data="cat:8_10")],
+        [InlineKeyboardButton(text="4 буквы ⭐ (Премиум)", callback_data="len:4"),
+         InlineKeyboardButton(text="5 букв ⭐ (Премиум)", callback_data="len:5")],
+        [InlineKeyboardButton(text="6 букв 🆓", callback_data="len:6"),
+         InlineKeyboardButton(text="7 букв 🆓", callback_data="len:7")],
+        [InlineKeyboardButton(text="8-10 букв 🆓", callback_data="len:8_10")],
         [InlineKeyboardButton(text="« Назад в меню", callback_data="home")],
+    ])
+
+def count_menu(length_val: str):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="5 шт.", callback_data=f"run:{length_val}:5"),
+         InlineKeyboardButton(text="10 шт.", callback_data=f"run:{length_val}:10"),
+         InlineKeyboardButton(text="20 шт.", callback_data=f"run:{length_val}:20")],
+        [InlineKeyboardButton(text="« К выбору длины", callback_data="categories")],
     ])
 
 def result_menu():
@@ -58,10 +66,8 @@ async def start(message: Message):
     
     await message.answer(
         "✨ <b>Добро пожаловать в MonoSearch</b> ✨\n\n"
-        "💎 <i>Генератор премиальных и красивых свободных юзернеймов в Coregram.</i>\n\n"
-        "📌 <b>Категории:</b>\n"
-        "• 4 и 5 букв — эксклюзивные премиум-варианты ⭐\n"
-        "• От 6 до 10 букв — бесплатные качественные юзы 🆓",
+        "💎 <i>Интеллектуальный подбор драгоценных свободных юзернеймов в Coregram.</i>\n\n"
+        "⚙️ <b>Гибкая настройка:</b> выберите длину и желаемое количество результатов.",
         reply_markup=menu(user.id),
         parse_mode="HTML",
     )
@@ -81,37 +87,52 @@ async def home(call: CallbackQuery):
 @router.callback_query(F.data == "categories")
 async def categories_handler(call: CallbackQuery):
     await call.message.edit_text(
-        "📂 <b>Выберите категорию для поиска:</b>\n\n"
-        "<i>Чем короче юзернейм, тем он ценнее. Короткие категории (4-5 букв) требуют Premium-статуса.</i>",
-        reply_markup=category_menu(),
+        "📂 <b>Шаг 1 из 2: Выберите длину юзернейма</b>\n\n"
+        "<i>Короткие категории (4 и 5 букв) требуют Premium-статуса. Остальные доступны бесплатно.</i>",
+        reply_markup=length_menu(),
         parse_mode="HTML",
     )
     await call.answer()
 
-@router.callback_query(F.data.startswith("cat:"))
-async def run_search(call: CallbackQuery):
-    data_val = call.data.split(":")[1]
+@router.callback_query(F.data.startswith("len:"))
+async def select_count_handler(call: CallbackQuery):
+    length_val = call.data.split(":")[1]
     user = call.from_user
     db.ensure_user(user.id, user.username)
 
     # Проверка для премиум категорий (4 и 5 букв)
-    is_premium_cat = data_val in ["4", "5"]
-    
-    if is_premium_cat:
+    if length_val in ["4", "5"]:
         if not (is_admin(user.id) or db.is_premium(user.id)):
             await call.message.edit_text(
                 "⭐ <b>Доступ ограничен</b>\n\n"
-                f"Категория <b>{data_val} буквы</b> является премиальной и доступна только обладателям Premium-статуса.",
+                f"Категория <b>{length_val} буквы</b> является премиальной и доступна только обладателям Premium-статуса.",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="⭐ Получить Premium", callback_data="premium")],
-                    [InlineKeyboardButton(text="« Назад к категориям", callback_data="categories")],
+                    [InlineKeyboardButton(text="« Назад к длине", callback_data="categories")],
                 ]),
                 parse_mode="HTML",
             )
             await call.answer()
             return
 
-    # Для бесплатных проверяем лимиты запросов
+    label_text = f"{length_val} букв" if length_val != "8_10" else "8-10 букв"
+    await call.message.edit_text(
+        f"📊 <b>Шаг 2 из 2: Выберите количество</b>\n\n"
+        f"Вы выбрали длину: <b>{label_text}</b>.\n"
+        "Сколько свободных вариантов вы хотите получить?",
+        reply_markup=count_menu(length_val),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+@router.callback_query(F.data.startswith("run:"))
+async def run_search(call: CallbackQuery):
+    _, length_val, target_str = call.data.split(":")
+    count = int(target_str)
+    user = call.from_user
+    db.ensure_user(user.id, user.username)
+
+    # Проверка лимитов бесплатных запросов
     if not is_admin(user.id) and not db.is_premium(user.id):
         if not db.consume_request(user.id):
             await call.message.edit_text(
@@ -126,17 +147,16 @@ async def run_search(call: CallbackQuery):
             await call.answer()
             return
 
-    length_option = int(data_val) if data_val.isdigit() else data_val
-    
+    length_option = int(length_val) if length_val.isdigit() else length_val
+
     await call.message.edit_text(
-        f"⚙️ <b>Подбираем драгоценные юзы ({data_val} символов)...</b>\n\n"
-        "⏳ <i>Генерируем благозвучные слова и проверяем доступность в Coregram...</i>",
+        f"⚙️ <b>Ищем {count} свободных юзов ({length_val} символов)...</b>\n\n"
+        "⏳ <i>Генерируем благозвучные слова и проверяем через Coregram...</i>",
         parse_mode="HTML",
     )
     
-    # Ищем 10 крутых вариантов
-    found = await generate_and_check(target=10, length_option=length_option)
-    db.add_search(user.id, 10, len(found))
+    found = await generate_and_check(target=count, length_option=length_option)
+    db.add_search(user.id, count, len(found))
 
     if not found:
         debug_info = get_last_error()
@@ -146,9 +166,10 @@ async def run_search(call: CallbackQuery):
             "Нажмите кнопку ниже, чтобы попробовать снова."
         )
     else:
-        # Вывод ОБЫЧНЫМ ТЕКСТОМ без моноширинных блоков
+        # Вывод обычным текстом без моноширинных блоков
+        label_text = f"{length_val} букв" if length_val != "8_10" else "8-10 букв"
         lines = [
-            f"💎 <b>Свободные драгоценные юзы ({data_val} букв):</b>",
+            f"💎 <b>Свободные драгоценные юзы ({label_text}):</b>",
             ""
         ]
         lines.extend(f"• @{u}" for u in found)
@@ -326,7 +347,7 @@ async def history(call: CallbackQuery):
 @router.callback_query(F.data == "help")
 async def help_page(call: CallbackQuery):
     await call.message.edit_text(
-        "ℹ️ <b>Справка</b>\n\nВыберите категорию нужной длины в главном меню, и бот автоматически отберет для вас красивые свободные варианты.",
+        "ℹ️ <b>Справка</b>\n\nВыберите категорию нужной длины и количество результатов в меню поиска.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🏠 В меню", callback_data="home")]
         ]),
@@ -362,7 +383,7 @@ async def main():
     bot = Bot(token=TOKEN, session=session)
     dp = Dispatcher()
     dp.include_router(router)
-    print("Бот с гибким выбором категорий запущен!")
+    print("Бот с гибким выбором длины и количества запущен!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
