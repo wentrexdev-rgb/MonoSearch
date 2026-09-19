@@ -18,14 +18,13 @@ DB_PATH = os.getenv("DATABASE_PATH", "monosearch.db")
 router = Router()
 db = Database(DB_PATH)
 
-ADMIN_USERNAME = "dick"
+# Ваш Telegram ID настроен как администратор
+ADMIN_IDS = [1780243277]
 
-def is_admin(username: str) -> bool:
-    if not username:
-        return False
-    return username.lower() == ADMIN_USERNAME.lower()
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMIN_IDS
 
-def menu(user_username: str = ""):
+def menu(user_id: int = 0):
     keyboard = [
         [InlineKeyboardButton(text="🔎 Найти usernames", callback_data="search")],
         [InlineKeyboardButton(text="⭐ Premium", callback_data="premium"),
@@ -34,7 +33,7 @@ def menu(user_username: str = ""):
         [InlineKeyboardButton(text="📌 Мои поиски", callback_data="history"),
          InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")],
     ]
-    if is_admin(user_username):
+    if is_admin(user_id):
         keyboard.insert(0, [InlineKeyboardButton(text="👑 Админ-панель", callback_data="admin_panel")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -67,7 +66,7 @@ async def start(message: Message):
         "• 🆓 Бесплатно: <b>3 поиска</b> в день\n"
         "• ⭐ Premium: <b>безлимит</b> + расширенная фильтрация\n"
         "• ⚡ Дополнительные пакеты запросов за Telegram Stars",
-        reply_markup=menu(user.username),
+        reply_markup=menu(user.id),
         parse_mode="HTML",
     )
 
@@ -78,7 +77,7 @@ async def home(call: CallbackQuery):
     await call.message.edit_text(
         "✨ <b>MonoSearch Главное меню</b> ✨\n\n"
         "🎯 Выберите нужное действие на панели ниже:",
-        reply_markup=menu(user.username),
+        reply_markup=menu(user.id),
         parse_mode="HTML",
     )
     await call.answer()
@@ -99,7 +98,8 @@ async def run_search(call: CallbackQuery):
     user = call.from_user
     db.ensure_user(user.id, user.username)
 
-    if is_admin(user.username) or db.is_premium(user.id):
+    # Администратор и премиум-пользователи обходят лимиты
+    if is_admin(user.id) or db.is_premium(user.id):
         allowed = True
     else:
         allowed = db.consume_request(user.id)
@@ -147,13 +147,13 @@ async def run_search(call: CallbackQuery):
 
 @router.callback_query(F.data == "admin_panel")
 async def admin_panel(call: CallbackQuery):
-    if not is_admin(call.from_user.username):
+    if not is_admin(call.from_user.id):
         await call.answer("⛔ Недостаточно прав!", show_alert=True)
         return
     
     users = db.get_all_users()
     await call.message.edit_text(
-        "👑 <b>Панель Администратора (Владелец)</b>\n\n"
+        "👑 <b>Панель Администратора</b>\n\n"
         f"👥 Всего пользователей в базе: <b>{len(users)}</b>\n"
         "👇 Нажмите кнопку ниже для управления пользователями:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -166,14 +166,14 @@ async def admin_panel(call: CallbackQuery):
 
 @router.callback_query(F.data == "admin:users")
 async def admin_users(call: CallbackQuery):
-    if not is_admin(call.from_user.username):
+    if not is_admin(call.from_user.id):
         return
     users = db.get_all_users()
     keyboard = []
-    for u in users[:20]: # Показываем первые 20 для удобства
+    for u in users[:20]:
         uid, username, extra, prem, banned = u
         uname = f"@{username}" if username else f"ID: {uid}"
-        icon = "🔴" if banned else ("⭐" if prem > time_now_safe() else "👤")
+        icon = "🔴" if banned else ("👑" if is_admin(uid) else ("⭐" if prem > time_now_safe() else "👤"))
         keyboard.append([InlineKeyboardButton(text=f"{icon} {uname} (Доп: {extra})", callback_data=f"admin:user:{uid}")])
     
     keyboard.append([InlineKeyboardButton(text="« Назад в админку", callback_data="admin_panel")])
@@ -187,7 +187,7 @@ async def admin_users(call: CallbackQuery):
 
 @router.callback_query(F.data.startswith("admin:user:"))
 async def admin_user_detail(call: CallbackQuery):
-    if not is_admin(call.from_user.username):
+    if not is_admin(call.from_user.id):
         return
     target_id = int(call.data.split(":")[2])
     user_data = db.get_user(target_id)
@@ -197,7 +197,7 @@ async def admin_user_detail(call: CallbackQuery):
 
     uid, username, extra, prem, banned = user_data
     uname = f"@{username}" if username else f"ID: {uid}"
-    status = "🔴 Заблокирован" if banned else ("⭐ Premium активен" if prem > time_now_safe() else "👤 Обычный")
+    status = "🔴 Заблокирован" if banned else ("👑 Администратор" if is_admin(uid) else ("⭐ Premium активен" if prem > time_now_safe() else "👤 Обычный"))
 
     text = (
         f"👤 <b>Управление пользователем:</b> {uname}\n\n"
@@ -219,7 +219,7 @@ async def admin_user_detail(call: CallbackQuery):
 
 @router.callback_query(F.data.startswith("admin:act:"))
 async def admin_action(call: CallbackQuery):
-    if not is_admin(call.from_user.username):
+    if not is_admin(call.from_user.id):
         return
     parts = call.data.split(":")
     action = parts[2]
@@ -240,12 +240,11 @@ async def admin_action(call: CallbackQuery):
         status_text = "заблокирован 🔴" if new_status == 1 else "разблокирован 🟢"
         await call.answer(f"✅ Пользователь {status_text}!", show_alert=True)
 
-    # Обновляем экран пользователя
     target_id = int(parts[-1])
     user_data = db.get_user(target_id)
     uid, username, extra, prem, banned = user_data
     uname = f"@{username}" if username else f"ID: {uid}"
-    status = "🔴 Заблокирован" if banned else ("⭐ Premium активен" if prem > time_now_safe() else "👤 Обычный")
+    status = "🔴 Заблокирован" if banned else ("👑 Администратор" if is_admin(uid) else ("⭐ Premium активен" if prem > time_now_safe() else "👤 Обычный"))
 
     text = (
         f"👤 <b>Управление пользователем:</b> {uname}\n\n"
@@ -371,7 +370,7 @@ async def history(call: CallbackQuery):
 async def help_page(call: CallbackQuery):
     await call.message.edit_text(
         "ℹ️ <b>Справка и руководство</b>\n\n"
-        "🤖 <b>MonoSearch Bot</b> генерирует качественные буквенные сочетания по фонетическим правилам, проверяя их доступность.\n\n"
+        "🤖 <b>MonoSearch Bot</b> генерирует качественные буквенные сочетания по фонетическим правилям, проверяя их доступность.\n\n"
         "🛡 <i>Безопасность и конфиденциальность:</i> все операции выполняются автоматически в защищенной среде.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🏠 В меню", callback_data="home")]
