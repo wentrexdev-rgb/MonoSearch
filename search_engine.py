@@ -52,10 +52,11 @@ def valid_candidate(s):
 async def check_username(session, username):
     clean_username = username.lstrip("@").strip()
     url = f"{COREGRAM_URL}/bot{BOT_TOKEN}/getChat"
-    params = {"chat_id": f"@{clean_username}"}
+    payload = {"chat_id": f"@{clean_username}"}
     
     try:
-        async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=4)) as r:
+        # Отправляем корректный POST-запрос с JSON-телом для Coregram API
+        async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=4)) as r:
             try:
                 data = await r.json(content_type=None)
             except Exception:
