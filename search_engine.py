@@ -5,6 +5,7 @@ import re
 import aiohttp
 
 BOT_TOKEN = "1780243306:E05ncdTVuEvF6s-s_9-RzU854yvZF9D89vM"
+COREGRAM_URL = "http://31.77.9.111:8081"
 
 VOWELS = "aioue"
 CONSONANTS = "bcdfghjklmnprstvwxz"
@@ -98,8 +99,10 @@ def valid_candidate(s):
 
 async def check_username(session, username):
     global LAST_SERVER_RESPONSE
-    url = f"http://31.77.9.111:8081/bot{BOT_TOKEN}/getChat"
-    params = {"chat_id": username}
+    clean_username = username.lstrip("@").strip()
+    url = f"{COREGRAM_URL}/bot{BOT_TOKEN}/getChat"
+    params = {"chat_id": f"@{clean_username}"}
+    
     try:
         async with session.get(
             url,
@@ -107,14 +110,22 @@ async def check_username(session, username):
             timeout=aiohttp.ClientTimeout(total=5),
         ) as r:
             text = await r.text()
-            LAST_SERVER_RESPONSE = f"HTTP {r.status} | Ответ: {text}"
+            LAST_SERVER_RESPONSE = f"@{clean_username} | HTTP {r.status} | {text}"
             
-            data = await r.json(content_type=None)
-            if data.get("ok") is True:
-                return False  # Занят
-            return True     # Свободен
+            try:
+                data = await r.json(content_type=None)
+            except Exception:
+                return False
+
+            # Точно такая же логика: если ok False и в описании chat not found — юзернейм свободен
+            if not data.get("ok"):
+                desc = data.get("description", "").lower()
+                if "chat not found" in desc:
+                    return True
+            return False
+            
     except Exception as e:
-        LAST_SERVER_RESPONSE = f"Ошибка подключения: {e}"
+        LAST_SERVER_RESPONSE = f"Ошибка сети @{clean_username}: {e}"
         return False
 
 async def generate_and_check(target):
