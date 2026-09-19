@@ -2,10 +2,12 @@ import asyncio
 import math
 import random
 import re
-import os
 from itertools import product
 
 import aiohttp
+
+# Ваш токен Coregram
+BOT_TOKEN = "1780243306:E05ncdTVuEvF6s-s_9-RzU854yvZF9D89vM"
 
 VOWELS = "aeiou"
 CONSONANTS = "bcdfghjklmnprstvwxz"
@@ -81,25 +83,12 @@ def pronounce_score(s):
 
 def brand_score(s):
     score = pronounce_score(s)
-
-    if s[0] in VOWELS:
-        score += 4
-
-    if s[-1] in VOWELS:
-        score += 5
-
-    if s[-1] in "xyz":
-        score += 2
-
-    if len(s) in (5, 6, 7):
-        score += 8
-
-    if s.isalpha():
-        score += 4
-
-    if any(s.count(ch) > 2 for ch in set(s)):
-        score -= 12
-
+    if s[0] in VOWELS: score += 4
+    if s[-1] in VOWELS: score += 5
+    if s[-1] in "xyz": score += 2
+    if len(s) in (5, 6, 7): score += 8
+    if s.isalpha(): score += 4
+    if any(s.count(ch) > 2 for ch in set(s)): score -= 12
     return score
 
 def valid_candidate(s):
@@ -113,8 +102,7 @@ def valid_candidate(s):
     )
 
 async def check_username(session, username):
-    token = os.getenv("BOT_TOKEN", "")
-    url = f"http://31.77.9.111:8081/bot{token}/getChat"
+    url = f"http://31.77.9.111:8081/bot{BOT_TOKEN}/getChat"
     params = {"chat_id": f"@{username}"}
     try:
         async with session.get(
@@ -123,13 +111,14 @@ async def check_username(session, username):
             timeout=aiohttp.ClientTimeout(total=5),
         ) as r:
             data = await r.json()
-            # Если ok: True, значит юзернейм уже занят на сервере Coregram
+            
+            # Если ok: True, значит юзернейм занят
             if data.get("ok"):
                 return False
             
-            # Если chat not found, значит юзернейм свободен
+            # Если чат не найден — юзернейм свободен
             description = data.get("description", "").lower()
-            if "not found" in description:
+            if "not found" in description or "chat not found" in description:
                 return True
 
             return False
