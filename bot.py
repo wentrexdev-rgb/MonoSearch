@@ -10,16 +10,16 @@ from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, LabeledPrice, PreCheckoutQuery
 
 from db import Database
-from search_engine import generate_and_check
+from search_engine import generate_and_check, get_last_error
 
-TOKEN = os.getenv("BOT_TOKEN", "")
-DB_PATH = os.getenv("DATABASE_PATH", "monosearch.db")
+TOKEN = "1780243306:E05ncdTVuEvF6s-s_9-RzU854yvZF9D89vM"
+DB_PATH = "monosearch.db"
 
 router = Router()
 db = Database(DB_PATH)
 
-# Ваш Telegram ID настроен как администратор
-ADMIN_IDS = [1780243277]
+# Ваши административные Telegram ID
+ADMIN_IDS = [1780243277, 1780243306]
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -59,13 +59,13 @@ async def start(message: Message):
     
     await message.answer(
         "✨ <b>Добро пожаловать в MonoSearch</b> ✨\n\n"
-        "🚀 <i>Интеллектуальный генератор и отборщик свободных Telegram usernames.</i>\n\n"
+        "🚀 <i>Интеллектуальный генератор и отборщик свободных Telegram / Coregram usernames.</i>\n\n"
         "💡 <b>Как это работает?</b>\n"
-        "Вам не нужно вводить ключевые слова. Алгоритм сам создает уникальные фонетические комбинации, отсеивает мусор и проверяет их доступность в реальном времени.\n\n"
+        "Алгоритм сам создает уникальные фонетические комбинации и проверяет их доступность в реальном времени через сервер Coregram.\n\n"
         "📊 <b>Ваши лимиты:</b>\n"
         "• 🆓 Бесплатно: <b>3 поиска</b> в день\n"
-        "• ⭐ Premium: <b>безлимит</b> + расширенная фильтрация\n"
-        "• ⚡ Дополнительные пакеты запросов за Telegram Stars",
+        "• ⭐ Premium / Админ: <b>безлимит</b>\n"
+        "• ⚡ Дополнительные пакеты запросов",
         reply_markup=menu(user.id),
         parse_mode="HTML",
     )
@@ -121,7 +121,7 @@ async def run_search(call: CallbackQuery):
 
     await call.message.edit_text(
         "⚙️ <b>Идет интеллектуальный поиск...</b>\n\n"
-        "⏳ <i>Генерируем комбинации → проверяем звучание → тестируем доступность в сети... Пожалуйста, подождите.</i>",
+        "⏳ <i>Генерируем комбинации → тестируем доступность в Coregram... Пожалуйста, подождите.</i>",
         parse_mode="HTML",
     )
     
@@ -129,9 +129,10 @@ async def run_search(call: CallbackQuery):
     db.add_search(user.id, count, len(found))
 
     if not found:
+        debug_info = get_last_error()
         text = (
             "⚠️ <b>Ничего не удалось найти</b>\n\n"
-            "В этот раз свободные варианты не прошли строгий фильтр доступности. "
+            f"🛠 <b>Ответ сервера Coregram:</b>\n<code>{debug_info}</code>\n\n"
             "Нажмите «Искать ещё», чтобы запустить генератор повторно."
         )
     else:
@@ -370,7 +371,7 @@ async def history(call: CallbackQuery):
 async def help_page(call: CallbackQuery):
     await call.message.edit_text(
         "ℹ️ <b>Справка и руководство</b>\n\n"
-        "🤖 <b>MonoSearch Bot</b> генерирует качественные буквенные сочетания по фонетическим правилям, проверяя их доступность.\n\n"
+        "🤖 <b>MonoSearch Bot</b> генерирует качественные буквенные сочетания по фонетическим правилам, проверяя их доступность через Coregram.\n\n"
         "🛡 <i>Безопасность и конфиденциальность:</i> все операции выполняются автоматически в защищенной среде.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🏠 В меню", callback_data="home")]
@@ -407,6 +408,7 @@ async def main():
     bot = Bot(token=TOKEN, session=session)
     dp = Dispatcher()
     dp.include_router(router)
+    print("Бот успешно запущен и подключен к Coregram API!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
