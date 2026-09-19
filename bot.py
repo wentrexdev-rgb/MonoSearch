@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 from datetime import datetime, timezone
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -18,7 +17,6 @@ DB_PATH = "monosearch.db"
 router = Router()
 db = Database(DB_PATH)
 
-# Ваши административные Telegram ID
 ADMIN_IDS = [1780243277, 1780243306]
 
 def is_admin(user_id: int) -> bool:
@@ -26,9 +24,9 @@ def is_admin(user_id: int) -> bool:
 
 def menu(user_id: int = 0):
     keyboard = [
-        [InlineKeyboardButton(text="🔎 Найти usernames", callback_data="search")],
+        [InlineKeyboardButton(text="🔎 Выбрать категорию юзов", callback_data="categories")],
         [InlineKeyboardButton(text="⭐ Premium", callback_data="premium"),
-         InlineKeyboardButton(text="📦 Запросы", callback_data="packs")],
+         InlineKeyboardButton(text="📦 Пакеты", callback_data="packs")],
         [InlineKeyboardButton(text="❤️ Поддержать", callback_data="support")],
         [InlineKeyboardButton(text="📌 Мои поиски", callback_data="history"),
          InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")],
@@ -37,18 +35,19 @@ def menu(user_id: int = 0):
         keyboard.insert(0, [InlineKeyboardButton(text="👑 Админ-панель", callback_data="admin_panel")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-def count_menu():
+def category_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="5 шт.", callback_data="count:5"),
-         InlineKeyboardButton(text="10 шт.", callback_data="count:10"),
-         InlineKeyboardButton(text="20 шт.", callback_data="count:20")],
-        [InlineKeyboardButton(text="50 шт.", callback_data="count:50")],
+        [InlineKeyboardButton(text="4 буквы ⭐ (Премиум)", callback_data="cat:4"),
+         InlineKeyboardButton(text="5 букв ⭐ (Премиум)", callback_data="cat:5")],
+        [InlineKeyboardButton(text="6 букв 🆓 (Бесплатно)", callback_data="cat:6")],
+        [InlineKeyboardButton(text="7 букв 🆓 (Бесплатно)", callback_data="cat:7")],
+        [InlineKeyboardButton(text="8-10 букв 🆓 (Бесплатно)", callback_data="cat:8_10")],
         [InlineKeyboardButton(text="« Назад в меню", callback_data="home")],
     ])
 
 def result_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 Искать ещё", callback_data="search")],
+        [InlineKeyboardButton(text="🔄 Искать ещё", callback_data="categories")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
     ])
 
@@ -59,13 +58,10 @@ async def start(message: Message):
     
     await message.answer(
         "✨ <b>Добро пожаловать в MonoSearch</b> ✨\n\n"
-        "🚀 <i>Интеллектуальный генератор и отборщик свободных Telegram / Coregram usernames.</i>\n\n"
-        "💡 <b>Как это работает?</b>\n"
-        "Алгоритм сам создает уникальные фонетические комбинации и проверяет их доступность в реальном времени через сервер Coregram.\n\n"
-        "📊 <b>Ваши лимиты:</b>\n"
-        "• 🆓 Бесплатно: <b>3 поиска</b> в день\n"
-        "• ⭐ Premium / Админ: <b>безлимит</b>\n"
-        "• ⚡ Дополнительные пакеты запросов",
+        "💎 <i>Генератор премиальных и красивых свободных юзернеймов в Coregram.</i>\n\n"
+        "📌 <b>Категории:</b>\n"
+        "• 4 и 5 букв — эксклюзивные премиум-варианты ⭐\n"
+        "• От 6 до 10 букв — бесплатные качественные юзы 🆓",
         reply_markup=menu(user.id),
         parse_mode="HTML",
     )
@@ -82,65 +78,80 @@ async def home(call: CallbackQuery):
     )
     await call.answer()
 
-@router.callback_query(F.data == "search")
-async def search(call: CallbackQuery):
+@router.callback_query(F.data == "categories")
+async def categories_handler(call: CallbackQuery):
     await call.message.edit_text(
-        "🔍 <b>Параметры поиска</b>\n\n"
-        "Выберите желаемое количество свободных usernames для генерации:",
-        reply_markup=count_menu(),
+        "📂 <b>Выберите категорию для поиска:</b>\n\n"
+        "<i>Чем короче юзернейм, тем он ценнее. Короткие категории (4-5 букв) требуют Premium-статуса.</i>",
+        reply_markup=category_menu(),
         parse_mode="HTML",
     )
     await call.answer()
 
-@router.callback_query(F.data.startswith("count:"))
+@router.callback_query(F.data.startswith("cat:"))
 async def run_search(call: CallbackQuery):
-    count = int(call.data.split(":")[1])
+    data_val = call.data.split(":")[1]
     user = call.from_user
     db.ensure_user(user.id, user.username)
 
-    # Администратор и премиум-пользователи обходят лимиты
-    if is_admin(user.id) or db.is_premium(user.id):
-        allowed = True
-    else:
-        allowed = db.consume_request(user.id)
+    # Проверка для премиум категорий (4 и 5 букв)
+    is_premium_cat = data_val in ["4", "5"]
+    
+    if is_premium_cat:
+        if not (is_admin(user.id) or db.is_premium(user.id)):
+            await call.message.edit_text(
+                "⭐ <b>Доступ ограничен</b>\n\n"
+                f"Категория <b>{data_val} буквы</b> является премиальной и доступна только обладателям Premium-статуса.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⭐ Получить Premium", callback_data="premium")],
+                    [InlineKeyboardButton(text="« Назад к категориям", callback_data="categories")],
+                ]),
+                parse_mode="HTML",
+            )
+            await call.answer()
+            return
 
-    if not allowed:
-        await call.message.edit_text(
-            "⚡ <b>Лимит бесплатных запросов исчерпан</b>\n\n"
-            "На сегодня доступно 3 бесплатных поиска.\n"
-            "Вы можете приобрести дополнительные пакеты или оформить Premium статус.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="📦 Купить запросы", callback_data="packs")],
-                [InlineKeyboardButton(text="⭐ Premium", callback_data="premium")],
-                [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
-            ]),
-            parse_mode="HTML",
-        )
-        await call.answer()
-        return
+    # Для бесплатных проверяем лимиты запросов
+    if not is_admin(user.id) and not db.is_premium(user.id):
+        if not db.consume_request(user.id):
+            await call.message.edit_text(
+                "⚡ <b>Лимит бесплатных запросов исчерпан</b>\n\n"
+                "На сегодня доступно 3 бесплатных поиска.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⭐ Premium", callback_data="premium")],
+                    [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+                ]),
+                parse_mode="HTML",
+            )
+            await call.answer()
+            return
 
+    length_option = int(data_val) if data_val.isdigit() else data_val
+    
     await call.message.edit_text(
-        "⚙️ <b>Идет интеллектуальный поиск...</b>\n\n"
-        "⏳ <i>Генерируем комбинации → тестируем доступность в Coregram... Пожалуйста, подождите.</i>",
+        f"⚙️ <b>Подбираем драгоценные юзы ({data_val} символов)...</b>\n\n"
+        "⏳ <i>Генерируем благозвучные слова и проверяем доступность в Coregram...</i>",
         parse_mode="HTML",
     )
     
-    found = await generate_and_check(count)
-    db.add_search(user.id, count, len(found))
+    # Ищем 10 крутых вариантов
+    found = await generate_and_check(target=10, length_option=length_option)
+    db.add_search(user.id, 10, len(found))
 
     if not found:
         debug_info = get_last_error()
         text = (
             "⚠️ <b>Ничего не удалось найти</b>\n\n"
             f"🛠 <b>Ответ сервера Coregram:</b>\n<code>{debug_info}</code>\n\n"
-            "Нажмите «Искать ещё», чтобы запустить генератор повторно."
+            "Нажмите кнопку ниже, чтобы попробовать снова."
         )
     else:
+        # Вывод ОБЫЧНЫМ ТЕКСТОМ без моноширинных блоков
         lines = [
-            "🎉 <b>Успешно найдено свободных usernames:</b>",
-            "",
+            f"💎 <b>Свободные драгоценные юзы ({data_val} букв):</b>",
+            ""
         ]
-        lines.extend(f"🟢 <code>@{u}</code>" for u in found)
+        lines.extend(f"• @{u}" for u in found)
         text = "\n".join(lines)
 
     await call.message.edit_text(text, reply_markup=result_menu(), parse_mode="HTML")
@@ -151,12 +162,10 @@ async def admin_panel(call: CallbackQuery):
     if not is_admin(call.from_user.id):
         await call.answer("⛔ Недостаточно прав!", show_alert=True)
         return
-    
     users = db.get_all_users()
     await call.message.edit_text(
         "👑 <b>Панель Администратора</b>\n\n"
-        f"👥 Всего пользователей в базе: <b>{len(users)}</b>\n"
-        "👇 Нажмите кнопку ниже для управления пользователями:",
+        f"👥 Всего пользователей: <b>{len(users)}</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="👥 Управление пользователями", callback_data="admin:users")],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
@@ -175,15 +184,9 @@ async def admin_users(call: CallbackQuery):
         uid, username, extra, prem, banned = u
         uname = f"@{username}" if username else f"ID: {uid}"
         icon = "🔴" if banned else ("👑" if is_admin(uid) else ("⭐" if prem > time_now_safe() else "👤"))
-        keyboard.append([InlineKeyboardButton(text=f"{icon} {uname} (Доп: {extra})", callback_data=f"admin:user:{uid}")])
-    
-    keyboard.append([InlineKeyboardButton(text="« Назад в админку", callback_data="admin_panel")])
-    
-    await call.message.edit_text(
-        "👥 <b>Список пользователей:</b>\nВыберите пользователя для управления:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
-        parse_mode="HTML",
-    )
+        keyboard.append([InlineKeyboardButton(text=f"{icon} {uname}", callback_data=f"admin:user:{uid}")])
+    keyboard.append([InlineKeyboardButton(text="« Назад", callback_data="admin_panel")])
+    await call.message.edit_text("👥 <b>Пользователи:</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode="HTML")
     await call.answer()
 
 @router.callback_query(F.data.startswith("admin:user:"))
@@ -195,26 +198,15 @@ async def admin_user_detail(call: CallbackQuery):
     if not user_data:
         await call.answer("Пользователь не найден!", show_alert=True)
         return
-
     uid, username, extra, prem, banned = user_data
     uname = f"@{username}" if username else f"ID: {uid}"
-    status = "🔴 Заблокирован" if banned else ("👑 Администратор" if is_admin(uid) else ("⭐ Premium активен" if prem > time_now_safe() else "👤 Обычный"))
-
-    text = (
-        f"👤 <b>Управление пользователем:</b> {uname}\n\n"
-        f"🆔 ID: <code>{uid}</code>\n"
-        f"⚡ Дополнительных запросов: <b>{extra}</b>\n"
-        f"💎 Статус: <b>{status}</b>"
-    )
-
+    status = "🔴 Заблокирован" if banned else ("👑 Админ" if is_admin(uid) else ("⭐ Premium" if prem > time_now_safe() else "👤 Обычный"))
+    text = f"👤 <b>Пользователь:</b> {uname}\n🆔 <code>{uid}</code>\n💎 Статус: <b>{status}</b>"
     keyboard = [
-        [InlineKeyboardButton(text="➕ Дать +10 запросов", callback_data=f"admin:act:give:10:{uid}"),
-         InlineKeyboardButton(text="➕ Дать +50 запросов", callback_data=f"admin:act:give:50:{uid}")],
         [InlineKeyboardButton(text="⭐ Премиум на 30 дней", callback_data=f"admin:act:prem:30:{uid}")],
         [InlineKeyboardButton(text="🔨 Бан / 🔓 Разбан", callback_data=f"admin:act:ban:{uid}")],
-        [InlineKeyboardButton(text="« К списку пользователей", callback_data="admin:users")],
+        [InlineKeyboardButton(text="« К списку", callback_data="admin:users")],
     ]
-
     await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode="HTML")
     await call.answer()
 
@@ -224,43 +216,15 @@ async def admin_action(call: CallbackQuery):
         return
     parts = call.data.split(":")
     action = parts[2]
-    
-    if action == "give":
-        amount = int(parts[3])
-        target_id = int(parts[4])
-        db.add_requests_by_id(target_id, amount)
-        await call.answer(f"✅ Добавлено {amount} запросов!", show_alert=True)
-    elif action == "prem":
-        days = int(parts[3])
-        target_id = int(parts[4])
+    if action == "prem":
+        days, target_id = int(parts[3]), int(parts[4])
         db.add_premium(target_id, days)
-        await call.answer(f"✅ Премиум выдан на {days} дней!", show_alert=True)
+        await call.answer("✅ Премиум выдан!", show_alert=True)
     elif action == "ban":
         target_id = int(parts[3])
-        new_status = db.toggle_ban(target_id)
-        status_text = "заблокирован 🔴" if new_status == 1 else "разблокирован 🟢"
-        await call.answer(f"✅ Пользователь {status_text}!", show_alert=True)
-
-    target_id = int(parts[-1])
-    user_data = db.get_user(target_id)
-    uid, username, extra, prem, banned = user_data
-    uname = f"@{username}" if username else f"ID: {uid}"
-    status = "🔴 Заблокирован" if banned else ("👑 Администратор" if is_admin(uid) else ("⭐ Premium активен" if prem > time_now_safe() else "👤 Обычный"))
-
-    text = (
-        f"👤 <b>Управление пользователем:</b> {uname}\n\n"
-        f"🆔 ID: <code>{uid}</code>\n"
-        f"⚡ Дополнительных запросов: <b>{extra}</b>\n"
-        f"💎 Статус: <b>{status}</b>"
-    )
-    keyboard = [
-        [InlineKeyboardButton(text="➕ Дать +10 запросов", callback_data=f"admin:act:give:10:{uid}"),
-         InlineKeyboardButton(text="➕ Дать +50 запросов", callback_data=f"admin:act:give:50:{uid}")],
-        [InlineKeyboardButton(text="⭐ Премиум на 30 дней", callback_data=f"admin:act:prem:30:{uid}")],
-        [InlineKeyboardButton(text="🔨 Бан / 🔓 Разбан", callback_data=f"admin:act:ban:{uid}")],
-        [InlineKeyboardButton(text="« К списку пользователей", callback_data="admin:users")],
-    ]
-    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode="HTML")
+        db.toggle_ban(target_id)
+        await call.answer("✅ Статус изменен!", show_alert=True)
+    await call.answer()
 
 def time_now_safe():
     return int(datetime.now(timezone.utc).timestamp())
@@ -268,15 +232,13 @@ def time_now_safe():
 @router.callback_query(F.data == "premium")
 async def premium(call: CallbackQuery):
     await call.message.edit_text(
-        "⭐ <b>MonoSearch Premium Статус</b> ⭐\n\n"
-        "💎 Безлимитные поиски без ограничений\n"
-        "🧠 Улучшенные алгоритмы ранжирования кандидатов\n"
-        "🔔 Приоритетная скорость обработки запросов\n\n"
+        "⭐ <b>MonoSearch Premium</b> ⭐\n\n"
+        "💎 Доступ к эксклюзивным категориям (4 и 5 букв)\n"
+        "🚀 Безлимитные поиски без ограничений\n\n"
         "👇 Выберите срок подписки:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="7 дней — 49 ⭐", callback_data="buy_premium:7:49")],
             [InlineKeyboardButton(text="30 дней — 129 ⭐", callback_data="buy_premium:30:129")],
-            [InlineKeyboardButton(text="90 дней — 299 ⭐", callback_data="buy_premium:90:299")],
             [InlineKeyboardButton(text="« Назад в меню", callback_data="home")],
         ]),
         parse_mode="HTML",
@@ -288,7 +250,7 @@ async def buy_premium(call: CallbackQuery):
     _, days, stars = call.data.split(":")
     await call.message.answer_invoice(
         title="MonoSearch Premium",
-        description=f"Активация подписки Premium на {days} дней",
+        description=f"Подписка на {days} дней",
         payload=f"premium:{days}",
         currency="XTR",
         prices=[LabeledPrice(label=f"Premium {days} дней", amount=int(stars))],
@@ -298,14 +260,10 @@ async def buy_premium(call: CallbackQuery):
 @router.callback_query(F.data == "packs")
 async def packs(call: CallbackQuery):
     await call.message.edit_text(
-        "📦 <b>Пакеты дополнительных запросов</b>\n\n"
-        "Выберите подходящий набор поисков для постоянного использования:",
+        "📦 <b>Пакеты запросов</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="3 запроса — 3 ⭐", callback_data="buy_pack:3:3")],
             [InlineKeyboardButton(text="10 запросов — 30 ⭐", callback_data="buy_pack:10:30")],
-            [InlineKeyboardButton(text="25 запросов — 65 ⭐", callback_data="buy_pack:25:65")],
             [InlineKeyboardButton(text="50 запросов — 120 ⭐", callback_data="buy_pack:50:120")],
-            [InlineKeyboardButton(text="100 запросов — 220 ⭐", callback_data="buy_pack:100:220")],
             [InlineKeyboardButton(text="« Назад в меню", callback_data="home")],
         ]),
         parse_mode="HTML",
@@ -316,7 +274,7 @@ async def packs(call: CallbackQuery):
 async def buy_pack(call: CallbackQuery):
     _, amount, stars = call.data.split(":")
     await call.message.answer_invoice(
-        title="MonoSearch — Пакет запросов",
+        title="Пакет запросов",
         description=f"Набор из {amount} поисков",
         payload=f"pack:{amount}",
         currency="XTR",
@@ -326,15 +284,13 @@ async def buy_pack(call: CallbackQuery):
 
 @router.callback_query(F.data == "support")
 async def support(call: CallbackQuery):
-    buttons = []
-    for stars in [15, 25, 50, 100, 200, 350]:
-        buttons.append(InlineKeyboardButton(text=f"⭐ {stars}", callback_data=f"support:{stars}"))
     await call.message.edit_text(
-        "❤️ <b>Поддержать развитие проекта</b>\n\n"
-        "Если бот помог вам занять крутой юзернейм, вы можете выразить благодарность разработчику через Telegram Stars.",
+        "❤️ <b>Поддержать проект</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            buttons[:3], buttons[3:],
-            [InlineKeyboardButton(text="« Назад в меню", callback_data="home")],
+            [InlineKeyboardButton(text="⭐ 25", callback_data="support:25"),
+             InlineKeyboardButton(text="⭐ 50", callback_data="support:50"),
+             InlineKeyboardButton(text="⭐ 100", callback_data="support:100")],
+            [InlineKeyboardButton(text="« Назад", callback_data="home")],
         ]),
         parse_mode="HTML",
     )
@@ -344,11 +300,11 @@ async def support(call: CallbackQuery):
 async def buy_support(call: CallbackQuery):
     stars = int(call.data.split(":")[1])
     await call.message.answer_invoice(
-        title="Поддержка MonoSearch",
-        description="Добровольный вклад в развитие сервиса",
+        title="Поддержка проекта",
+        description="Вклад в развитие сервиса",
         payload=f"support:{stars}",
         currency="XTR",
-        prices=[LabeledPrice(label="Поддержка проекта", amount=stars)],
+        prices=[LabeledPrice(label="Поддержка", amount=stars)],
     )
     await call.answer()
 
@@ -356,7 +312,7 @@ async def buy_support(call: CallbackQuery):
 async def history(call: CallbackQuery):
     rows = db.history(call.from_user.id)
     if not rows:
-        text = "📌 <b>История поисков</b>\n\nВы еще не запускали генерацию."
+        text = "📌 <b>История поисков пуста.</b>"
     else:
         lines = ["📌 <b>Ваши последние поиски:</b>", ""]
         for row in rows:
@@ -370,9 +326,7 @@ async def history(call: CallbackQuery):
 @router.callback_query(F.data == "help")
 async def help_page(call: CallbackQuery):
     await call.message.edit_text(
-        "ℹ️ <b>Справка и руководство</b>\n\n"
-        "🤖 <b>MonoSearch Bot</b> генерирует качественные буквенные сочетания по фонетическим правилам, проверяя их доступность через Coregram.\n\n"
-        "🛡 <i>Безопасность и конфиденциальность:</i> все операции выполняются автоматически в защищенной среде.",
+        "ℹ️ <b>Справка</b>\n\nВыберите категорию нужной длины в главном меню, и бот автоматически отберет для вас красивые свободные варианты.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🏠 В меню", callback_data="home")]
         ]),
@@ -390,13 +344,13 @@ async def successful_payment(message: Message):
     if payload.startswith("premium:"):
         days = int(payload.split(":")[1])
         db.add_premium(message.from_user.id, days)
-        await message.answer(f"⭐ <b>Успешно!</b> Premium-подписка на {days} дней активирована.")
+        await message.answer(f"⭐ Premium подписка на {days} дней активирована!")
     elif payload.startswith("pack:"):
         amount = int(payload.split(":")[1])
         db.add_requests(message.from_user.id, amount)
-        await message.answer(f"📦 <b>Успешно!</b> Начислено дополнительных поисков: {amount}.")
+        await message.answer(f"📦 Начислено поисков: {amount}.")
     elif payload.startswith("support:"):
-        await message.answer("❤️ Огромное спасибо за вашу поддержку проекта!")
+        await message.answer("❤️ Спасибо за поддержку!")
 
 async def main():
     if not TOKEN:
@@ -408,7 +362,7 @@ async def main():
     bot = Bot(token=TOKEN, session=session)
     dp = Dispatcher()
     dp.include_router(router)
-    print("Бот успешно запущен и подключен к Coregram API!")
+    print("Бот с гибким выбором категорий запущен!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
