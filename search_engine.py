@@ -6,7 +6,6 @@ from itertools import product
 
 import aiohttp
 
-# Ваш токен Coregram
 BOT_TOKEN = "1780243306:E05ncdTVuEvF6s-s_9-RzU854yvZF9D89vM"
 
 VOWELS = "aeiou"
@@ -103,22 +102,22 @@ def valid_candidate(s):
 
 async def check_username(session, username):
     url = f"http://31.77.9.111:8081/bot{BOT_TOKEN}/getChat"
-    params = {"chat_id": f"@{username}"}
+    params = {"chat_id": username}
     try:
         async with session.get(
             url,
             params=params,
             timeout=aiohttp.ClientTimeout(total=5),
         ) as r:
-            data = await r.json()
+            text = await r.text()
+            print(f"[DEBUG] Юзернейм: {username} | Статус: {r.status} | Ответ: {text}")
             
-            # Если ok: True, значит юзернейм кем-то занят
+            data = await r.json(content_type=None)
             if data.get("ok") is True:
-                return False
-            
-            # Если ok не True (например, False), значит чат не найден — юзернейм свободен!
-            return True
-    except Exception:
+                return False  # Занят
+            return True     # Свободен
+    except Exception as e:
+        print(f"[DEBUG] Ошибка сети для {username}: {e}")
         return False
 
 async def generate_and_check(target):
