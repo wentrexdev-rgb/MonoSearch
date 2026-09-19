@@ -74,21 +74,27 @@ class Database:
         with self.connect() as c:
             c.execute("UPDATE users SET extra_requests=extra_requests+? WHERE user_id=?", (amount, user_id))
 
-    def add_requests_by_username(self, username, amount):
+    def add_requests_by_id(self, user_id, amount):
+        self.ensure_user(user_id)
         with self.connect() as c:
-            row = c.execute("SELECT user_id FROM users WHERE LOWER(username)=LOWER(?)", (username,)).fetchone()
-            if not row:
-                return False
-            c.execute("UPDATE users SET extra_requests=extra_requests+? WHERE user_id=?", (amount, row[0]))
-            return True
+            c.execute("UPDATE users SET extra_requests=extra_requests+? WHERE user_id=?", (amount, user_id))
 
-    def set_ban_by_username(self, username, status):
+    def toggle_ban(self, user_id):
         with self.connect() as c:
-            c.execute("UPDATE users SET is_banned=? WHERE LOWER(username)=LOWER(?)", (status, username))
+            row = c.execute("SELECT is_banned FROM users WHERE user_id=?", (user_id,)).fetchone()
+            if row:
+                new_status = 0 if row[0] == 1 else 1
+                c.execute("UPDATE users SET is_banned=? WHERE user_id=?", (new_status, user_id))
+                return new_status
+        return None
+
+    def get_user(self, user_id):
+        with self.connect() as c:
+            return c.execute("SELECT user_id, username, extra_requests, premium_until, is_banned FROM users WHERE user_id=?", (user_id,)).fetchone()
 
     def get_all_users(self):
         with self.connect() as c:
-            return c.execute("SELECT user_id, username, extra_requests, premium_until, is_banned FROM users").fetchall()
+            return c.execute("SELECT user_id, username, extra_requests, premium_until, is_banned FROM users ORDER BY user_id DESC").fetchall()
 
     def add_premium(self, user_id, days):
         self.ensure_user(user_id)
