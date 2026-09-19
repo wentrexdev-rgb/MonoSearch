@@ -112,16 +112,12 @@ async def check_username(session, username):
         ) as r:
             data = await r.json()
             
-            # Если ok: True, значит юзернейм занят
-            if data.get("ok"):
+            # Если ok: True, значит юзернейм кем-то занят
+            if data.get("ok") is True:
                 return False
             
-            # Если чат не найден — юзернейм свободен
-            description = data.get("description", "").lower()
-            if "not found" in description or "chat not found" in description:
-                return True
-
-            return False
+            # Если ok не True (например, False), значит чат не найден — юзернейм свободен!
+            return True
     except Exception:
         return False
 
