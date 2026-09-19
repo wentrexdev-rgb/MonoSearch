@@ -117,7 +117,6 @@ async def check_username(session, username):
 
             if not data.get("ok"):
                 desc = data.get("description", "").lower()
-                # Считаем юзернейм свободным при любом типе ошибки отсутствия чата/инвалидного ID
                 if "chat not found" in desc or "chat_id_invalid" in desc:
                     return True
             return False
@@ -132,6 +131,9 @@ async def generate_and_check(target=10, length_option=6):
 
     if isinstance(length_option, int):
         lengths = [length_option]
+        weights = [100]
+    elif isinstance(length_option, str) and length_option.isdigit():
+        lengths = [int(length_option)]
         weights = [100]
     elif length_option == "8_10":
         lengths = [8, 9, 10]
