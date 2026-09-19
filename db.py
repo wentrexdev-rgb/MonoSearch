@@ -13,10 +13,12 @@ class Database:
         with self.connect() as c:
             c.execute("""CREATE TABLE IF NOT EXISTS users(
                 user_id INTEGER PRIMARY KEY,
+                username TEXT,
                 extra_requests INTEGER NOT NULL DEFAULT 0,
                 premium_until INTEGER NOT NULL DEFAULT 0,
                 daily_used INTEGER NOT NULL DEFAULT 0,
-                daily_date TEXT NOT NULL DEFAULT ''
+                daily_date TEXT NOT NULL DEFAULT '',
+                is_banned INTEGER NOT NULL DEFAULT 0
             )""")
             c.execute("""CREATE TABLE IF NOT EXISTS searches(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,26 +28,36 @@ class Database:
                 created_at TEXT NOT NULL
             )""")
 
-    def ensure_user(self, user_id):
+    def ensure_user(self, user_id, username=""):
         with self.connect() as c:
-            c.execute("INSERT OR IGNORE INTO users(user_id) VALUES(?)", (user_id,))
+            c.execute(
+                "INSERT OR IGNORE INTO users(user_id, username) VALUES(?, ?)",
+                (user_id, username or "")
+            )
+            if username:
+                c.execute("UPDATE users SET username=? WHERE user_id=?", (username, user_id))
 
     def _reset_day(self, c, user_id):
         today = datetime.now(timezone.utc).date().isoformat()
         row = c.execute("SELECT daily_date FROM users WHERE user_id=?", (user_id,)).fetchone()
         if not row or row[0] != today:
-            c.execute("UPDATE users SET daily_used=0,daily_date=? WHERE user_id=?", (today, user_id))
+            c.execute("UPDATE users SET daily_used=0, daily_date=? WHERE user_id=?", (today, user_id))
         return today
 
     def is_premium(self, user_id):
         self.ensure_user(user_id)
         now = int(datetime.now(timezone.utc).timestamp())
         with self.connect() as c:
-            return c.execute("SELECT premium_until FROM users WHERE user_id=?", (user_id,)).fetchone()[0] > now
+            row = c.execute("SELECT premium_until FROM users WHERE user_id=?", (user_id,)).fetchone()
+            return row and row[0] > now
 
     def consume_request(self, user_id):
         self.ensure_user(user_id)
         with self.connect() as c:
+            banned = c.execute("SELECT is_banned FROM users WHERE user_id=?", (user_id,)).fetchone()
+            if banned and banned[0] == 1:
+                return False
+
             self._reset_day(c, user_id)
             extra = c.execute("SELECT extra_requests FROM users WHERE user_id=?", (user_id,)).fetchone()[0]
             if extra > 0:
@@ -61,6 +73,22 @@ class Database:
         self.ensure_user(user_id)
         with self.connect() as c:
             c.execute("UPDATE users SET extra_requests=extra_requests+? WHERE user_id=?", (amount, user_id))
+
+    def add_requests_by_username(self, username, amount):
+        with self.connect() as c:
+            row = c.execute("SELECT user_id FROM users WHERE LOWER(username)=LOWER(?)", (username,)).fetchone()
+            if not row:
+                return False
+            c.execute("UPDATE users SET extra_requests=extra_requests+? WHERE user_id=?", (amount, row[0]))
+            return True
+
+    def set_ban_by_username(self, username, status):
+        with self.connect() as c:
+            c.execute("UPDATE users SET is_banned=? WHERE LOWER(username)=LOWER(?)", (status, username))
+
+    def get_all_users(self):
+        with self.connect() as c:
+            return c.execute("SELECT user_id, username, extra_requests, premium_until, is_banned FROM users").fetchall()
 
     def add_premium(self, user_id, days):
         self.ensure_user(user_id)
