@@ -2,13 +2,11 @@ import asyncio
 import math
 import random
 import re
-from itertools import product
-
 import aiohttp
 
 BOT_TOKEN = "1780243306:E05ncdTVuEvF6s-s_9-RzU854yvZF9D89vM"
 
-VOWELS = "aeiou"
+VOWELS = "aioue"
 CONSONANTS = "bcdfghjklmnprstvwxz"
 
 ONSETS = [
@@ -25,6 +23,12 @@ BAD = {
     "fuck","shit","porn","sex","nazi","hitler","kkk","admin","telegram",
     "support","official","scam","casino","bet","crypto"
 }
+
+LAST_SERVER_RESPONSE = "Запросов еще не было"
+
+def get_last_error():
+    global LAST_SERVER_RESPONSE
+    return LAST_SERVER_RESPONSE
 
 def syllable():
     onset = random.choice(ONSETS)
@@ -54,27 +58,19 @@ def pronounce_score(s):
 
     for i in range(len(s)-1):
         a, b = s[i], s[i+1]
-        if a not in VOWELS and b not in VOWELS:
-            score -= 9
-        if a in VOWELS and b in VOWELS:
-            score -= 2
+        if a not in VOWELS and b not in VOWELS: score -= 9
+        if a in VOWELS and b in VOWELS: score -= 2
 
-    if len(set(s)) == len(s):
-        score += 8
-    elif len(set(s)) >= len(s)-1:
-        score += 3
+    if len(set(s)) == len(s): score += 8
+    elif len(set(s)) >= len(s)-1: score += 3
 
-    if any(s.count(ch) >= 3 for ch in set(s)):
-        score -= 18
-
-    if re.search(r"(.)\1\1", s):
-        score -= 20
+    if any(s.count(ch) >= 3 for ch in set(s)): score -= 18
+    if re.search(r"(.)\1\1", s): score -= 20
 
     common_pairs = ["ve","va","vi","vo","vu","le","la","li","lo","lu",
                     "ra","re","ri","ro","ru","ne","no","na","el","av",
                     "or","ix","ex","on","en"]
     score += sum(2 for p in common_pairs if p in s)
-
     ugly = ["qx","qz","zx","xq","wq","jv","qv","qj","vv","ww"]
     score -= sum(20 for p in ugly if p in s)
 
@@ -101,6 +97,7 @@ def valid_candidate(s):
     )
 
 async def check_username(session, username):
+    global LAST_SERVER_RESPONSE
     url = f"http://31.77.9.111:8081/bot{BOT_TOKEN}/getChat"
     params = {"chat_id": username}
     try:
@@ -110,14 +107,14 @@ async def check_username(session, username):
             timeout=aiohttp.ClientTimeout(total=5),
         ) as r:
             text = await r.text()
-            print(f"[DEBUG] Юзернейм: {username} | Статус: {r.status} | Ответ: {text}")
+            LAST_SERVER_RESPONSE = f"HTTP {r.status} | Ответ: {text}"
             
             data = await r.json(content_type=None)
             if data.get("ok") is True:
                 return False  # Занят
             return True     # Свободен
     except Exception as e:
-        print(f"[DEBUG] Ошибка сети для {username}: {e}")
+        LAST_SERVER_RESPONSE = f"Ошибка подключения: {e}"
         return False
 
 async def generate_and_check(target):
