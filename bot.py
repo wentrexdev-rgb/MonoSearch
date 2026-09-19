@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, LabeledPrice, PreCheckoutQuery
 
 from db import Database
@@ -151,14 +151,13 @@ async def admin_panel(call: CallbackQuery):
         await call.answer("⛔ Недостаточно прав!", show_alert=True)
         return
     
+    users = db.get_all_users()
     await call.message.edit_text(
-        "👑 <b>Панель Администратора / Владельца</b>\n\n"
-        "Приветствую, босс! Вы вошли в секретное меню управления ботом.\n"
-        "Выберите инструмент:",
+        "👑 <b>Панель Администратора (Владелец)</b>\n\n"
+        f"👥 Всего пользователей в базе: <b>{len(users)}</b>\n"
+        "👇 Нажмите кнопку ниже для управления пользователями:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="👥 Список всех пользователей", callback_data="admin:users")],
-            [InlineKeyboardButton(text="⚡ Выдать запросы игроку", callback_data="admin:give_menu")],
-            [InlineKeyboardButton(text="🔨 Забанить / Разбанить", callback_data="admin:ban_menu")],
+            [InlineKeyboardButton(text="👥 Управление пользователями", callback_data="admin:users")],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
         ]),
         parse_mode="HTML",
@@ -170,101 +169,98 @@ async def admin_users(call: CallbackQuery):
     if not is_admin(call.from_user.username):
         return
     users = db.get_all_users()
-    text = "👥 <b>Список зарегистрированных пользователей:</b>\n\n"
-    for u in users:
+    keyboard = []
+    for u in users[:20]: # Показываем первые 20 для удобства
         uid, username, extra, prem, banned = u
         uname = f"@{username}" if username else f"ID: {uid}"
-        status = "🔴 ЗАБАНЕН" if banned else ("⭐ Премиум" if prem > time_now_safe() else "👤 Обычный")
-        text += f"• {uname} | Запросов: {extra} | Статус: {status}\n"
+        icon = "🔴" if banned else ("⭐" if prem > time_now_safe() else "👤")
+        keyboard.append([InlineKeyboardButton(text=f"{icon} {uname} (Доп: {extra})", callback_data=f"admin:user:{uid}")])
     
-    if len(text) > 4000:
-        text = text[:3996] + "\n..."
-
+    keyboard.append([InlineKeyboardButton(text="« Назад в админку", callback_data="admin_panel")])
+    
     await call.message.edit_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад в админку", callback_data="admin_panel")]
-        ]),
+        "👥 <b>Список пользователей:</b>\nВыберите пользователя для управления:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
         parse_mode="HTML",
     )
     await call.answer()
 
-@router.callback_query(F.data == "admin:give_menu")
-async def admin_give_menu(call: CallbackQuery):
+@router.callback_query(F.data.startswith("admin:user:"))
+async def admin_user_detail(call: CallbackQuery):
     if not is_admin(call.from_user.username):
         return
-    await call.message.edit_text(
-        "⚡ <b>Выдача запросов пользователю</b>\n\n"
-        "Отправьте в чат команду в формате:\n"
-        "<code>/give username количество</code>\n"
-        "<i>Например: /give username_123 50</i>",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад в админку", callback_data="admin_panel")]
-        ]),
-        parse_mode="HTML",
+    target_id = int(call.data.split(":")[2])
+    user_data = db.get_user(target_id)
+    if not user_data:
+        await call.answer("Пользователь не найден!", show_alert=True)
+        return
+
+    uid, username, extra, prem, banned = user_data
+    uname = f"@{username}" if username else f"ID: {uid}"
+    status = "🔴 Заблокирован" if banned else ("⭐ Premium активен" if prem > time_now_safe() else "👤 Обычный")
+
+    text = (
+        f"👤 <b>Управление пользователем:</b> {uname}\n\n"
+        f"🆔 ID: <code>{uid}</code>\n"
+        f"⚡ Дополнительных запросов: <b>{extra}</b>\n"
+        f"💎 Статус: <b>{status}</b>"
     )
+
+    keyboard = [
+        [InlineKeyboardButton(text="➕ Дать +10 запросов", callback_data=f"admin:act:give:10:{uid}"),
+         InlineKeyboardButton(text="➕ Дать +50 запросов", callback_data=f"admin:act:give:50:{uid}")],
+        [InlineKeyboardButton(text="⭐ Премиум на 30 дней", callback_data=f"admin:act:prem:30:{uid}")],
+        [InlineKeyboardButton(text="🔨 Бан / 🔓 Разбан", callback_data=f"admin:act:ban:{uid}")],
+        [InlineKeyboardButton(text="« К списку пользователей", callback_data="admin:users")],
+    ]
+
+    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode="HTML")
     await call.answer()
 
-@router.callback_query(F.data == "admin:ban_menu")
-async def admin_ban_menu(call: CallbackQuery):
+@router.callback_query(F.data.startswith("admin:act:"))
+async def admin_action(call: CallbackQuery):
     if not is_admin(call.from_user.username):
         return
-    await call.message.edit_text(
-        "🔨 <b>Управление блокировками</b>\n\n"
-        "Отправьте в чат команду для бана/разбана:\n"
-        "• Бан: <code>/ban username</code>\n"
-        "• Разбан: <code>/unban username</code>",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад в админку", callback_data="admin_panel")]
-        ]),
-        parse_mode="HTML",
-    )
-    await call.answer()
-
-@router.message(Command("give"))
-async def cmd_give(message: Message):
-    if not is_admin(message.from_user.username):
-        return
-    args = message.text.split()
-    if len(args) < 3:
-        await message.answer("⚠️ Формат: /give username количество")
-        return
-    target_uname = args[1].lstrip("@")
-    try:
-        amount = int(args[2])
-    except ValueError:
-        await message.answer("⚠️ Количество должно быть числом.")
-        return
+    parts = call.data.split(":")
+    action = parts[2]
     
-    success = db.add_requests_by_username(target_uname, amount)
-    if success:
-        await message.answer(f"✅ Успешно добавлено {amount} запросов для @{target_uname}!")
-    else:
-        await message.answer(f"❌ Пользователь @{target_uname} не найден в базе данных.")
+    if action == "give":
+        amount = int(parts[3])
+        target_id = int(parts[4])
+        db.add_requests_by_id(target_id, amount)
+        await call.answer(f"✅ Добавлено {amount} запросов!", show_alert=True)
+    elif action == "prem":
+        days = int(parts[3])
+        target_id = int(parts[4])
+        db.add_premium(target_id, days)
+        await call.answer(f"✅ Премиум выдан на {days} дней!", show_alert=True)
+    elif action == "ban":
+        target_id = int(parts[3])
+        new_status = db.toggle_ban(target_id)
+        status_text = "заблокирован 🔴" if new_status == 1 else "разблокирован 🟢"
+        await call.answer(f"✅ Пользователь {status_text}!", show_alert=True)
 
-@router.message(Command("ban"))
-async def cmd_ban(message: Message):
-    if not is_admin(message.from_user.username):
-        return
-    args = message.text.split()
-    if len(args) < 2:
-        await message.answer("⚠️ Формат: /ban username")
-        return
-    target_uname = args[1].lstrip("@")
-    db.set_ban_by_username(target_uname, 1)
-    await message.answer(f"🔨 Пользователь @{target_uname} заблокирован.")
+    # Обновляем экран пользователя
+    target_id = int(parts[-1])
+    user_data = db.get_user(target_id)
+    uid, username, extra, prem, banned = user_data
+    uname = f"@{username}" if username else f"ID: {uid}"
+    status = "🔴 Заблокирован" if banned else ("⭐ Premium активен" if prem > time_now_safe() else "👤 Обычный")
 
-@router.message(Command("unban"))
-async def cmd_unban(message: Message):
-    if not is_admin(message.from_user.username):
-        return
-    args = message.text.split()
-    if len(args) < 2:
-        await message.answer("⚠️ Формат: /unban username")
-        return
-    target_uname = args[1].lstrip("@")
-    db.set_ban_by_username(target_uname, 0)
-    await message.answer(f"🔓 Пользователь @{target_uname} разблокирован.")
+    text = (
+        f"👤 <b>Управление пользователем:</b> {uname}\n\n"
+        f"🆔 ID: <code>{uid}</code>\n"
+        f"⚡ Дополнительных запросов: <b>{extra}</b>\n"
+        f"💎 Статус: <b>{status}</b>"
+    )
+    keyboard = [
+        [InlineKeyboardButton(text="➕ Дать +10 запросов", callback_data=f"admin:act:give:10:{uid}"),
+         InlineKeyboardButton(text="➕ Дать +50 запросов", callback_data=f"admin:act:give:50:{uid}")],
+        [InlineKeyboardButton(text="⭐ Премиум на 30 дней", callback_data=f"admin:act:prem:30:{uid}")],
+        [InlineKeyboardButton(text="🔨 Бан / 🔓 Разбан", callback_data=f"admin:act:ban:{uid}")],
+        [InlineKeyboardButton(text="« К списку пользователей", callback_data="admin:users")],
+    ]
+    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode="HTML")
 
 def time_now_safe():
     return int(datetime.now(timezone.utc).timestamp())
@@ -394,7 +390,7 @@ async def successful_payment(message: Message):
     if payload.startswith("premium:"):
         days = int(payload.split(":")[1])
         db.add_premium(message.from_user.id, days)
-        await message.answer(f"⭐ <b>Успешно!</b> Premium-подстактивация на {days} дней выполнена.")
+        await message.answer(f"⭐ <b>Успешно!</b> Premium-подписка на {days} дней активирована.")
     elif payload.startswith("pack:"):
         amount = int(payload.split(":")[1])
         db.add_requests(message.from_user.id, amount)
