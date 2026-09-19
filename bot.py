@@ -4,6 +4,8 @@ import os
 from datetime import datetime, timezone
 
 from aiogram import Bot, Dispatcher, F, Router
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.telegram import TelegramAPIServer
 from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, LabeledPrice, PreCheckoutQuery
 
@@ -278,7 +280,10 @@ async def main():
     if not TOKEN:
         raise RuntimeError("BOT_TOKEN is not set")
     logging.basicConfig(level=logging.INFO)
-    bot = Bot(TOKEN)
+    session = AiohttpSession(
+        api=TelegramAPIServer.from_base("http://31.77.9.111:8081")
+    )
+    bot = Bot(token=TOKEN, session=session)
     dp = Dispatcher()
     dp.include_router(router)
     await dp.start_polling(bot)
