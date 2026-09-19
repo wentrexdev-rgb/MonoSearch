@@ -8,8 +8,6 @@ BOT_TOKEN = "1780243306:E05ncdTVuEvF6s-s_9-RzU854yvZF9D89vM"
 COREGRAM_URL = "http://31.77.9.111:8081"
 
 VOWELS = "aioue"
-CONSONANTS = "bcdfghjklmnprstvwxz"
-
 ONSETS = [
     "b","br","c","cr","d","dr","f","fr","g","gr","h","j","k","kr",
     "l","m","n","p","pr","r","s","sk","sl","sm","sn","st","t","tr",
@@ -55,7 +53,6 @@ async def check_username(session, username):
     payload = {"chat_id": f"@{clean_username}"}
     
     try:
-        # Отправляем корректный POST-запрос с JSON-телом для Coregram API
         async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=4)) as r:
             try:
                 data = await r.json(content_type=None)
