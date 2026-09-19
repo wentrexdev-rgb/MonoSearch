@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, LabeledPrice, PreCheckoutQuery
@@ -24,7 +24,6 @@ ADMIN_IDS = [1780243277, 1780243306]
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
-# FSM Состояния для админ-панели
 class AdminState(StatesGroup):
     waiting_for_user_id = State()
     waiting_for_requests_count = State()
@@ -48,8 +47,8 @@ def length_menu():
         [InlineKeyboardButton(text="4 буквы ⭐ (Премиум)", callback_data="len:4"),
          InlineKeyboardButton(text="5 букв ⭐ (Премиум)", callback_data="len:5")],
         [InlineKeyboardButton(text="6 букв 🆓", callback_data="len:6"),
-         InlineKeyboardButton(text="7 букв 🆓", callback_data="len:7")],
-        [InlineKeyboardButton(text="8-10 букв 🆓", callback_data="len:8_10")],
+         InlineKeyboardButton(text="7 букв 🆓", callback_data="len:7"),
+         InlineKeyboardButton(text="8-10 букв 🆓", callback_data="len:8_10")],
         [InlineKeyboardButton(text="« Назад в меню", callback_data="home")],
     ])
 
@@ -76,114 +75,29 @@ async def start(message: Message, state: FSMContext):
         await message.answer("⛔ Вы заблокированы в этом боте.")
         return
     await message.answer(
-        "✨ <b>MonoSearch</b> — поиск свободных юзернеймов.\n\n"
+        "✨ <b>MonoSearch</b> — поиск свободных брендовых имен.\n\n"
         "Выберите действие ниже:",
         reply_markup=menu(user.id),
         parse_mode="HTML",
     )
 
-@router.callback_query(F.data == "home")
-async def home(call: CallbackQuery, state: FSMContext):
-    await state.clear()
-    user = call.from_user
-    db.ensure_user(user.id, user.username)
-    await call.message.edit_text(
-        "✨ <b>MonoSearch Главное меню</b> ✨\n\nВыберите раздел:",
-        reply_markup=menu(user.id),
-        parse_mode="HTML",
-    )
-    await call.answer()
-
-@router.callback_query(F.data == "categories")
-async def categories_handler(call: CallbackQuery):
-    await call.message.edit_text(
-        "📂 <b>Шаг 1: Выберите длину юзернейма</b>",
-        reply_markup=length_menu(),
-        parse_mode="HTML",
-    )
-    await call.answer()
-
-@router.callback_query(F.data.startswith("len:"))
-async def select_count_handler(call: CallbackQuery):
-    length_val = call.data.split(":")[1]
-    user = call.from_user
-    db.ensure_user(user.id, user.username)
-
-    if length_val in ["4", "5"]:
-        if not (is_admin(user.id) or db.is_premium(user.id)):
-            await call.message.edit_text(
-                f"⭐ Категория <b>{length_val} буквы</b> доступна только с Premium.",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="⭐ Получить Premium", callback_data="premium")],
-                    [InlineKeyboardButton(text="« Назад", callback_data="categories")],
-                ]),
-                parse_mode="HTML",
-            )
-            await call.answer()
-            return
-
-    label_text = f"{length_val} букв" if length_val != "8_10" else "8-10 букв"
-    await call.message.edit_text(
-        f"📊 <b>Шаг 2: Сколько штук сгенерировать?</b>\n\nВыбрана длина: <b>{label_text}</b>",
-        reply_markup=count_menu(length_val),
-        parse_mode="HTML",
-    )
-    await call.answer()
-
-@router.callback_query(F.data.startswith("run:"))
-async def run_search(call: CallbackQuery):
-    _, length_val, target_str = call.data.split(":")
-    count = int(target_str)
-    user = call.from_user
-    db.ensure_user(user.id, user.username)
-
-    if not is_admin(user.id) and not db.is_premium(user.id):
-        if not db.consume_request(user.id):
-            await call.message.edit_text(
-                "⚡ Лимит бесплатных запросов исчерпан.",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="⭐ Premium", callback_data="premium")],
-                    [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
-                ]),
-                parse_mode="HTML",
-            )
-            await call.answer()
-            return
-
-    length_option = int(length_val) if length_val.isdigit() else length_val
-
-    # АНИМАЦИЯ ПОИСКА: динамическое изменение текста
-    await call.message.edit_text("⚙️ <b>Этап 1/3:</b> Генерация пула вариантов...", parse_mode="HTML")
-    await asyncio.sleep(0.4)
-    await call.message.edit_text("🧠 <b>Этап 2/3:</b> Оценка качества и брендовости...", parse_mode="HTML")
-    await asyncio.sleep(0.4)
-    await call.message.edit_text(f"🌐 <b>Этап 3/3:</b> Проверка через Coregram API...", parse_mode="HTML")
-    
-    found = await generate_and_check(target=count, length_option=length_option)
-    db.add_search(user.id, count, len(found))
-
-    if not found:
-        text = (
-            "⚠️ <b>В этот раз ничего свободного не нашлось.</b>\n\n"
-            "Попробуйте запустить поиск ещё раз или сменить длину."
-        )
-    else:
-        label_text = f"{length_val} букв" if length_val != "8_10" else "8-10 букв"
-        lines = [f"💎 <b>Свободные юзы ({label_text}):</b>\n"]
-        lines.extend(f"• @{u}" for u in found)
-        text = "\n".join(lines)
-
-    await call.message.edit_text(text, reply_markup=result_menu(), parse_mode="HTML")
-    await call.answer()
-
-# --- УЛУЧШЕННАЯ АДМИН-ПАНЕЛЬ ---
-
-@router.callback_query(F.data == "admin_panel")
-async def admin_panel(call: CallbackQuery, state: FSMContext):
-    if not is_admin(call.from_user.id):
-        await call.answer("⛔ Недостаточно прав!", show_alert=True)
+@router.message(Command("admin"))
+async def admin_command(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ У вас нет доступа к админ-панели.")
         return
     await state.clear()
+    await open_admin_panel(message, is_edit=False)
+
+@router.callback_query(F.data == "admin_panel")
+async def admin_panel_callback(call: CallbackQuery, state: FSMContext):
+    await call.answer()  # ВСЕГДА ВЫЗЫВАЕМ ПЕРВЫМ ДЕЛОМ, ЧТОБЫ КНОПКА НЕ ВИСЛА
+    if not is_admin(call.from_user.id):
+        return
+    await state.clear()
+    await open_admin_panel(call.message, is_edit=True)
+
+async def open_admin_panel(message: Message, is_edit: bool = False):
     total_users, prem_users, banned_users, total_searches = db.get_stats()
     text = (
         "👑 <b>Панель Администратора</b>\n\n"
@@ -194,14 +108,136 @@ async def admin_panel(call: CallbackQuery, state: FSMContext):
     )
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👥 Список пользователей", callback_data="admin:users")],
-        [InlineKeyboardButton(text="🔍 Найти/Ууправлять по ID", callback_data="admin:find_user_prompt")],
+        [InlineKeyboardButton(text="🔍 Найти / Управлять по ID", callback_data="admin:find_user_prompt")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
     ])
-    await call.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    if is_edit:
+        try:
+            await message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        except Exception:
+            await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+    else:
+        await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+@router.callback_query(F.data == "home")
+async def home(call: CallbackQuery, state: FSMContext):
     await call.answer()
+    await state.clear()
+    user = call.from_user
+    db.ensure_user(user.id, user.username)
+    try:
+        await call.message.edit_text(
+            "✨ <b>MonoSearch Главное меню</b> ✨\n\nВыберите раздел:",
+            reply_markup=menu(user.id),
+            parse_mode="HTML",
+        )
+    except Exception:
+        await call.message.answer(
+            "✨ <b>MonoSearch Главное меню</b> ✨\n\nВыберите раздел:",
+            reply_markup=menu(user.id),
+            parse_mode="HTML",
+        )
+
+@router.callback_query(F.data == "categories")
+async def categories_handler(call: CallbackQuery):
+    await call.answer()
+    try:
+        await call.message.edit_text(
+            "📂 <b>Шаг 1: Выберите длину юзернейма</b>",
+            reply_markup=length_menu(),
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+
+@router.callback_query(F.data.startswith("len:"))
+async def select_count_handler(call: CallbackQuery):
+    await call.answer()
+    length_val = call.data.split(":")[1]
+    user = call.from_user
+    db.ensure_user(user.id, user.username)
+
+    if length_val in ["4", "5"]:
+        if not (is_admin(user.id) or db.is_premium(user.id)):
+            try:
+                await call.message.edit_text(
+                    f"⭐ Категория <b>{length_val} буквы</b> доступна только с Premium.",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="⭐ Получить Premium", callback_data="premium")],
+                        [InlineKeyboardButton(text="« Назад", callback_data="categories")],
+                    ]),
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+            return
+
+    label_text = f"{length_val} букв" if length_val != "8_10" else "8-10 букв"
+    try:
+        await call.message.edit_text(
+            f"📊 <b>Шаг 2: Сколько штук сгенерировать?</b>\n\nВыбрана длина: <b>{label_text}</b>",
+            reply_markup=count_menu(length_val),
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+
+@router.callback_query(F.data.startswith("run:"))
+async def run_search(call: CallbackQuery):
+    await call.answer()
+    _, length_val, target_str = call.data.split(":")
+    count = int(target_str)
+    user = call.from_user
+    db.ensure_user(user.id, user.username)
+
+    if not is_admin(user.id) and not db.is_premium(user.id):
+        if not db.consume_request(user.id):
+            try:
+                await call.message.edit_text(
+                    "⚡ Лимит бесплатных запросов исчерпан.",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="⭐ Premium", callback_data="premium")],
+                        [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+                    ]),
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+            return
+
+    length_option = int(length_val) if length_val.isdigit() else length_val
+
+    try:
+        await call.message.edit_text("⚙️ <b>Шаг 1/2:</b> Выборка брендовых слов...", parse_mode="HTML")
+    except Exception:
+        pass
+    await asyncio.sleep(0.3)
+    try:
+        await call.message.edit_text(f"🌐 <b>Шаг 2/2:</b> Проверка доступности...", parse_mode="HTML")
+    except Exception:
+        pass
+    
+    found = await generate_and_check(target=count, length_option=length_option)
+    db.add_search(user.id, count, len(found))
+
+    if not found:
+        text = "⚠️ <b>В этот раз ничего свободного не нашлось.</b>\n\nПопробуйте запустить поиск ещё раз."
+    else:
+        label_text = f"{length_val} букв" if length_val != "8_10" else "8-10 букв"
+        lines = [f"💎 <b>Свободные брендовые юзы ({label_text}):</b>\n"]
+        lines.extend(f"• @{u}" for u in found)
+        text = "\n".join(lines)
+
+    try:
+        await call.message.edit_text(text, reply_markup=result_menu(), parse_mode="HTML")
+    except Exception:
+        await call.message.answer(text, reply_markup=result_menu(), parse_mode="HTML")
+
+# --- АДМИН УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ ---
 
 @router.callback_query(F.data == "admin:users")
 async def admin_users(call: CallbackQuery):
+    await call.answer()
     if not is_admin(call.from_user.id):
         return
     users = db.get_all_users()
@@ -212,32 +248,37 @@ async def admin_users(call: CallbackQuery):
         icon = "🔴" if banned else ("👑" if is_admin(uid) else ("⭐" if prem > int(datetime.now(timezone.utc).timestamp()) else "👤"))
         keyboard.append([InlineKeyboardButton(text=f"{icon} {uname} (ID: {uid})", callback_data=f"admin:user:{uid}")])
     keyboard.append([InlineKeyboardButton(text="« Назад", callback_data="admin_panel")])
-    await call.message.edit_text("👥 <b>Пользователи базы:</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode="HTML")
-    await call.answer()
+    try:
+        await call.message.edit_text("👥 <b>Пользователи базы:</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode="HTML")
+    except Exception:
+        pass
 
 @router.callback_query(F.data == "admin:find_user_prompt")
 async def admin_find_user_prompt(call: CallbackQuery, state: FSMContext):
+    await call.answer()
     if not is_admin(call.from_user.id):
         return
     await state.set_state(AdminState.waiting_for_user_id)
-    await call.message.edit_text(
-        "🆔 <b>Введите Telegram ID пользователя</b> для управления им:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="« Отмена", callback_data="admin_panel")]]),
-        parse_mode="HTML",
-    )
-    await call.answer()
+    try:
+        await call.message.edit_text(
+            "🆔 <b>Введите Telegram ID пользователя</b>:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="« Отмена", callback_data="admin_panel")]]),
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
 
 @router.message(AdminState.waiting_for_user_id)
 async def admin_receive_user_id(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         return
     if not message.text.isdigit():
-        await message.answer("⚠️ Введите корректный числовой ID:")
+        await message.answer("⚠️ Введите числовой ID:")
         return
     target_id = int(message.text)
     user_data = db.get_user(target_id)
     if not user_data:
-        await message.answer("⚠️ Пользователь с таким ID не найден в базе.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="« Назад", callback_data="admin_panel")]]))
+        await message.answer("⚠️ Пользователь не найден.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="« Назад", callback_data="admin_panel")]]))
         await state.clear()
         return
     
@@ -247,11 +288,11 @@ async def admin_receive_user_id(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("admin:user:"))
 async def admin_user_detail_callback(call: CallbackQuery):
+    await call.answer()
     if not is_admin(call.from_user.id):
         return
     target_id = int(call.data.split(":")[2])
     await show_user_management(call.message, target_id, is_edit=True)
-    await call.answer()
 
 async def show_user_management(message: Message, target_id: int, is_edit: bool = False):
     user_data = db.get_user(target_id)
@@ -261,13 +302,13 @@ async def show_user_management(message: Message, target_id: int, is_edit: bool =
     uname = f"@{username}" if username else f"ID: {uid}"
     now = int(datetime.now(timezone.utc).timestamp())
     is_prem = prem > now
-    status = "🔴 Заблокирован" if banned else ("👑 Админ" if is_admin(uid) else ("⭐ Premium" if is_prem else "👤 Обычный"))
+    status = "🔴 Бан" if banned else ("👑 Админ" if is_admin(uid) else ("⭐ Premium" if is_prem else "👤 Обычный"))
     
     text = (
-        f"👤 <b>Управление пользователем:</b> {uname}\n"
+        f"👤 <b>Пользователь:</b> {uname}\n"
         f"🆔 ID: <code>{uid}</code>\n"
         f"💎 Статус: <b>{status}</b>\n"
-        f"📦 Доп. запросов на балансе: <b>{extra}</b>"
+        f"📦 Доп. запросов: <b>{extra}</b>"
     )
     keyboard = [
         [InlineKeyboardButton(text="➕ Выдать запросы", callback_data=f"adm_act:add_req:{uid}"),
@@ -279,77 +320,74 @@ async def show_user_management(message: Message, target_id: int, is_edit: bool =
     ]
     markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
     if is_edit:
-        await message.edit_text(text, reply_markup=markup, parse_mode="HTML")
+        try:
+            await message.edit_text(text, reply_markup=markup, parse_mode="HTML")
+        except Exception:
+            await message.answer(text, reply_markup=markup, parse_mode="HTML")
     else:
         await message.answer(text, reply_markup=markup, parse_mode="HTML")
 
-# Управление действиями с запросами / премиумом (FSM для ввода чисел)
 @router.callback_query(F.data.startswith("adm_act:"))
 async def admin_actions_dispatcher(call: CallbackQuery, state: FSMContext, bot: Bot):
+    await call.answer()
     if not is_admin(call.from_user.id):
         return
     parts = call.data.split(":")
     action, target_id = parts[1], int(parts[2])
     
     if action == "ban":
-        new_ban = db.toggle_ban(target_id)
-        status_text = "заблокирован 🔴" if new_ban else "разблокирован 🟢"
-        await call.answer(f"Пользователь {status_text}!", show_alert=True)
+        db.toggle_ban(target_id)
         await show_user_management(call.message, target_id, is_edit=True)
         return
     
     if action == "rev_prem":
         db.revoke_premium(target_id)
         try:
-            await bot.send_message(target_id, "⚠️ Ваша Premium-подписка была аннулирована администратором.")
+            await bot.send_message(target_id, "⚠️ Ваша Premium подписка аннулирована администратором.")
         except Exception:
             pass
-        await call.answer("✅ Премиум успешно забран!", show_alert=True)
         await show_user_management(call.message, target_id, is_edit=True)
         return
 
-    # Для действий требующих ввода числа (запросы или дни према)
     await state.update_data(target_id=target_id, action_type=action)
     if action in ["add_req", "sub_req"]:
         await state.set_state(AdminState.waiting_for_requests_count)
-        await call.message.edit_text(
-            "✍️ Введите <b>количество запросов</b> числом (например: <code>10</code> или <code>50</code>):",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="« Отмена", callback_data=f"admin:user:{target_id}")]])
-        )
+        try:
+            await call.message.edit_text("✍️ Введите <b>количество запросов</b> числом:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="« Отмена", callback_data=f"admin:user:{target_id}")]]))
+        except Exception:
+            pass
     elif action == "add_prem":
         await state.set_state(AdminState.waiting_for_premium_days)
-        await call.message.edit_text(
-            "✍️ Введите <b>количество дней Premium</b> числом (например: <code>30</code>):",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="« Отмена", callback_data=f"admin:user:{target_id}")]])
-        )
-    await call.answer()
+        try:
+            await call.message.edit_text("✍️ Введите <b>количество дней Premium</b> числом:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="« Отмена", callback_data=f"admin:user:{target_id}")]]))
+        except Exception:
+            pass
 
 @router.message(AdminState.waiting_for_requests_count)
 async def process_requests_input(message: Message, state: FSMContext, bot: Bot):
     if not is_admin(message.from_user.id):
         return
     if not message.text.isdigit():
-        await message.answer("⚠️ Введите целое число:")
+        await message.answer("⚠️ Введите число:")
         return
     amount = int(message.text)
     data = await state.get_data()
-    target_id = data.get("target_id")
-    action_type = data.get("action_type")
+    target_id, action_type = data.get("target_id"), data.get("action_type")
     
     if action_type == "add_req":
         db.add_requests(target_id, amount)
         try:
-            await bot.send_message(target_id, f"🎉 Вам начислено дополнительных поисков: <b>{amount}</b>!", parse_mode="HTML")
+            await bot.send_message(target_id, f"🎉 Вам начислено поисков: <b>{amount}</b>!", parse_mode="HTML")
         except Exception:
             pass
-        await message.answer(f"✅ Успешно добавлено {amount} запросов пользователю {target_id}!")
-    elif action_type == "sub_req":
+        await message.answer(f"✅ Добавлено {amount} запросов.")
+    else:
         db.add_requests(target_id, -amount)
         try:
             await bot.send_message(target_id, f"⚠️ У вас списано поисков: <b>{amount}</b>.", parse_mode="HTML")
         except Exception:
             pass
-        await message.answer(f"✅ Успешно списано {amount} запросов у пользователя {target_id}!")
+        await message.answer(f"✅ Списано {amount} запросов.")
         
     await state.clear()
     await show_user_management(message, target_id)
@@ -359,7 +397,7 @@ async def process_premium_input(message: Message, state: FSMContext, bot: Bot):
     if not is_admin(message.from_user.id):
         return
     if not message.text.isdigit():
-        await message.answer("⚠️ Введите целое число дней:")
+        await message.answer("⚠️ Введите число дней:")
         return
     days = int(message.text)
     data = await state.get_data()
@@ -367,120 +405,99 @@ async def process_premium_input(message: Message, state: FSMContext, bot: Bot):
     
     db.add_premium(target_id, days)
     try:
-        await bot.send_message(target_id, f"⭐ Вам выдана Premium подписка на <b>{days} дней</b>!", parse_mode="HTML")
+        await bot.send_message(target_id, f"⭐ Вам выдан Premium на <b>{days} дней</b>!", parse_mode="HTML")
     except Exception:
         pass
     
-    await message.answer(f"✅ Премиум на {days} дней успешно выдан пользователю {target_id}!")
+    await message.answer(f"✅ Премиум на {days} дней выдан.")
     await state.clear()
     await show_user_management(message, target_id)
 
-# --- РАЗДЕЛ ОПЛАТЫ И ТОВАРОВ (TELEGRAM STARS) ---
-
+# Оплата Stars
 @router.callback_query(F.data == "premium")
 async def premium(call: CallbackQuery):
-    await call.message.edit_text(
-        "⭐ <b>MonoSearch Premium</b> ⭐\n\n"
-        "💎 Доступ к эксклюзивным категориям (4 и 5 букв)\n"
-        "🚀 Безлимитные поиски без ограничений\n\n"
-        "👇 Выберите срок подписки:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="7 дней — 49 ⭐", callback_data="buy_premium:7:49")],
-            [InlineKeyboardButton(text="30 дней — 129 ⭐", callback_data="buy_premium:30:129")],
-            [InlineKeyboardButton(text="« Назад в меню", callback_data="home")],
-        ]),
-        parse_mode="HTML",
-    )
     await call.answer()
+    try:
+        await call.message.edit_text(
+            "⭐ <b>MonoSearch Premium</b>\n\nДоступ к 4 и 5 буквенным реальным словарям и безлимитный поиск.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="7 дней — 49 ⭐", callback_data="buy_premium:7:49")],
+                [InlineKeyboardButton(text="30 дней — 129 ⭐", callback_data="buy_premium:30:129")],
+                [InlineKeyboardButton(text="« Назад", callback_data="home")],
+            ]),
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
 
 @router.callback_query(F.data.startswith("buy_premium:"))
 async def buy_premium(call: CallbackQuery):
+    await call.answer()
     _, days, stars = call.data.split(":")
     await call.message.answer_invoice(
-        title="MonoSearch Premium",
-        description=f"Подписка на {days} дней",
-        payload=f"premium:{days}",
-        currency="XTR",
-        prices=[LabeledPrice(label=f"Premium {days} дней", amount=int(stars))],
+        title="MonoSearch Premium", description=f"Подписка на {days} дней",
+        payload=f"premium:{days}", currency="XTR", prices=[LabeledPrice(label=f"Premium {days} дней", amount=int(stars))]
     )
-    await call.answer()
 
 @router.callback_query(F.data == "packs")
 async def packs(call: CallbackQuery):
-    await call.message.edit_text(
-        "📦 <b>Пакеты запросов</b>",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="10 запросов — 30 ⭐", callback_data="buy_pack:10:30")],
-            [InlineKeyboardButton(text="50 запросов — 120 ⭐", callback_data="buy_pack:50:120")],
-            [InlineKeyboardButton(text="« Назад в меню", callback_data="home")],
-        ]),
-        parse_mode="HTML",
-    )
     await call.answer()
+    try:
+        await call.message.edit_text(
+            "📦 <b>Пакеты запросов</b>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="10 запросов — 30 ⭐", callback_data="buy_pack:10:30")],
+                [InlineKeyboardButton(text="50 запросов — 120 ⭐", callback_data="buy_pack:50:120")],
+                [InlineKeyboardButton(text="« Назад", callback_data="home")],
+            ]),
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
 
 @router.callback_query(F.data.startswith("buy_pack:"))
 async def buy_pack(call: CallbackQuery):
+    await call.answer()
     _, amount, stars = call.data.split(":")
     await call.message.answer_invoice(
-        title="Пакет запросов",
-        description=f"Набор из {amount} поисков",
-        payload=f"pack:{amount}",
-        currency="XTR",
-        prices=[LabeledPrice(label=f"{amount} поисков", amount=int(stars))],
+        title="Пакет запросов", description=f"Набор из {amount} поисков",
+        payload=f"pack:{amount}", currency="XTR", prices=[LabeledPrice(label=f"{amount} поисков", amount=int(stars))]
     )
-    await call.answer()
 
 @router.callback_query(F.data == "support")
 async def support(call: CallbackQuery):
-    await call.message.edit_text(
-        "❤️ <b>Поддержать проект</b>",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⭐ 25", callback_data="support:25"),
-             InlineKeyboardButton(text="⭐ 50", callback_data="support:50"),
-             InlineKeyboardButton(text="⭐ 100", callback_data="support:100")],
-            [InlineKeyboardButton(text="« Назад", callback_data="home")],
-        ]),
-        parse_mode="HTML",
-    )
     await call.answer()
+    try:
+        await call.message.edit_text("❤️ <b>Поддержать проект</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⭐ 25", callback_data="support:25"), InlineKeyboardButton(text="⭐ 50", callback_data="support:50")],
+            [InlineKeyboardButton(text="« Назад", callback_data="home")]
+        ]), parse_mode="HTML")
+    except Exception:
+        pass
 
 @router.callback_query(F.data.startswith("support:"))
 async def buy_support(call: CallbackQuery):
-    stars = int(call.data.split(":")[1])
-    await call.message.answer_invoice(
-        title="Поддержка проекта",
-        description="Вклад в развитие сервиса",
-        payload=f"support:{stars}",
-        currency="XTR",
-        prices=[LabeledPrice(label="Поддержка", amount=stars)],
-    )
     await call.answer()
+    stars = int(call.data.split(":")[1])
+    await call.message.answer_invoice(title="Поддержка", description="Вклад в развитие", payload=f"support:{stars}", currency="XTR", prices=[LabeledPrice(label="Поддержка", amount=stars)])
 
 @router.callback_query(F.data == "history")
 async def history(call: CallbackQuery):
-    rows = db.history(call.from_user.id)
-    if not rows:
-        text = "📌 <b>История пуста.</b>"
-    else:
-        lines = ["📌 <b>Ваши поиски:</b>\n"]
-        for row in rows:
-            lines.append(f"• Найдено: <b>{row[0]}</b> шт. — <i>{row[1][:16]}</i>")
-        text = "\n".join(lines)
-    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🏠 В меню", callback_data="home")]
-    ]), parse_mode="HTML")
     await call.answer()
+    rows = db.history(call.from_user.id)
+    text = "📌 <b>История пуста.</b>" if not rows else "📌 <b>Ваши поиски:</b>\n" + "\n".join(f"• Найдено: <b>{r[0]}</b> шт. — <i>{r[1][:16]}</i>" for r in rows)
+    try:
+        await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 В меню", callback_data="home")]]), parse_mode="HTML")
+    except Exception:
+        pass
 
 @router.callback_query(F.data == "help")
 async def help_page(call: CallbackQuery):
-    await call.message.edit_text(
-        "ℹ️ <b>Справка:</b> выбирайте длину, затем количество, и бот выдаст список свободных вариантов.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🏠 В меню", callback_data="home")]
-        ]),
-        parse_mode="HTML",
-    )
     await call.answer()
+    try:
+        await call.message.edit_text("ℹ️ Бот ищет реальные свободные слова и бренды.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 В меню", callback_data="home")]]), parse_mode="HTML")
+    except Exception:
+        pass
 
 @router.pre_checkout_query()
 async def pre_checkout(query: PreCheckoutQuery):
@@ -489,27 +506,25 @@ async def pre_checkout(query: PreCheckoutQuery):
 @router.message(F.successful_payment)
 async def successful_payment(message: Message):
     payload = message.successful_payment.invoice_payload
-    user_id = message.from_user.id
+    uid = message.from_user.id
     if payload.startswith("premium:"):
         days = int(payload.split(":")[1])
-        db.add_premium(user_id, days)
-        await message.answer(f"⭐ Успешно! Premium подписка на {days} дней активирована.")
+        db.add_premium(uid, days)
+        await message.answer(f"⭐ Премиум на {days} дней активирован!")
     elif payload.startswith("pack:"):
         amount = int(payload.split(":")[1])
-        db.add_requests(user_id, amount)
-        await message.answer(f"📦 Успешно! Вам начислено {amount} поисков.")
+        db.add_requests(uid, amount)
+        await message.answer(f"📦 Начислено {amount} запросов!")
     elif payload.startswith("support:"):
-        await message.answer("❤️ Огромное спасибо за поддержку проекта!")
+        await message.answer("❤️ Огромное спасибо за поддержку!")
 
 async def main():
-    if not TOKEN:
-        raise RuntimeError("BOT_TOKEN is not set")
     logging.basicConfig(level=logging.INFO)
     session = AiohttpSession(api=TelegramAPIServer.from_base("http://31.77.9.111:8081"))
     bot = Bot(token=TOKEN, session=session)
     dp = Dispatcher()
     dp.include_router(router)
-    print("Бот запущен с расширенной админ-панелью, анимациями и надежными платежами!")
+    print("Бот запущен! Админ-панель и Apify интеграция работают стабильно.")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
