@@ -2,6 +2,7 @@ import asyncio
 import math
 import random
 import re
+import os
 from itertools import product
 
 import aiohttp
@@ -9,8 +10,6 @@ import aiohttp
 VOWELS = "aeiou"
 CONSONANTS = "bcdfghjklmnprstvwxz"
 
-# Эти элементы не являются списком готовых usernames.
-# Они используются как фонетические строительные блоки.
 ONSETS = [
     "b","br","c","cr","d","dr","f","fr","g","gr","h","j","k","kr",
     "l","m","n","p","pr","r","s","sk","sl","sm","sn","st","t","tr",
@@ -33,7 +32,6 @@ def syllable():
     return onset + vowel + coda
 
 def generate_candidate(length):
-    # Генерация не от слова пользователя, а из фонетических компонентов.
     for _ in range(40):
         parts = []
         while len("".join(parts)) < length:
@@ -99,7 +97,6 @@ def brand_score(s):
     if s.isalpha():
         score += 4
 
-    # Избегаем ощущения случайной строки.
     if any(s.count(ch) > 2 for ch in set(s)):
         score -= 12
 
@@ -116,36 +113,30 @@ def valid_candidate(s):
     )
 
 async def check_username(session, username):
-    url = f"https://t.me/{username}"
+    token = os.getenv("BOT_TOKEN", "")
+    url = f"http://31.77.9.111:8081/bot{token}/getChat"
+    params = {"chat_id": f"@{username}"}
     try:
         async with session.get(
             url,
+            params=params,
             timeout=aiohttp.ClientTimeout(total=5),
-            allow_redirects=True,
-            headers={"User-Agent": "Mozilla/5.0 MonoSearch/1.0"},
         ) as r:
-            text = (await r.text(errors="ignore")).lower()
-
-            # Только явные 404/410 считаем свободными.
-            # Всё неоднозначное отбрасываем.
-            if r.status in (404, 410):
-                return True
-
-            unavailable_markers = [
-                "if you have telegram, you can contact",
-                "view in telegram",
-                "this username is already",
-                "username is unavailable",
-            ]
-            if any(m in text for m in unavailable_markers):
+            data = await r.json()
+            # Если ok: True, значит юзернейм уже занят на сервере Coregram
+            if data.get("ok"):
                 return False
+            
+            # Если chat not found, значит юзернейм свободен
+            description = data.get("description", "").lower()
+            if "not found" in description:
+                return True
 
             return False
     except Exception:
         return False
 
 async def generate_and_check(target):
-    # Генерируем большой пул независимо от пользовательского ввода, включая 4-символьные варианты.
     pool = {}
     attempts = max(4000, target * 1200)
 
@@ -158,8 +149,6 @@ async def generate_and_check(target):
         pool[s] = max(score, pool.get(s, -999))
 
     ranked = sorted(pool, key=pool.get, reverse=True)
-
-    # Проверяем только хороший верхний слой, чтобы не создавать лишнюю нагрузку.
     check_pool = ranked[:max(150, target * 20)]
 
     connector = aiohttp.TCPConnector(limit=20)
