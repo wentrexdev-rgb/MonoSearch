@@ -65,13 +65,13 @@ def pronounce_score(s):
     if len(set(s)) == len(s): score += 8
     elif len(set(s)) >= len(s)-1: score += 3
 
-    if any(s.count(ch) >= 3 for ch in set(s)): score -= 18
+    if any(s.count(ch) >= 3 for ch in s): score -= 18
     if re.search(r"(.)\1\1", s): score -= 20
 
     common_pairs = ["ve","va","vi","vo","vu","le","la","li","lo","lu",
                     "ra","re","ri","ro","ru","ne","no","na","el","av",
                     "or","ix","ex","on","en"]
-    score += sum(2 for p in common_pairs if p in s)
+    score += sum(3 for p in common_pairs if p in s)
     ugly = ["qx","qz","zx","xq","wq","jv","qv","qj","vv","ww"]
     score -= sum(20 for p in ugly if p in s)
 
@@ -80,17 +80,15 @@ def pronounce_score(s):
 def brand_score(s):
     score = pronounce_score(s)
     if s[0] in VOWELS: score += 4
-    if s[-1] in VOWELS: score += 5
-    if s[-1] in "xyz": score += 2
-    if len(s) in (5, 6, 7): score += 8
-    if s.isalpha(): score += 4
+    if s[-1] in VOWELS: score += 6
+    if s[-1] in "xyz": score += 3
+    if s.isalpha(): score += 5
     if any(s.count(ch) > 2 for ch in set(s)): score -= 12
     return score
 
 def valid_candidate(s):
     return (
         bool(s)
-        and 4 <= len(s) <= 32
         and s.isascii()
         and s.isalpha()
         and s not in BAD
@@ -117,7 +115,6 @@ async def check_username(session, username):
             except Exception:
                 return False
 
-            # Точно такая же логика: если ok False и в описании chat not found — юзернейм свободен
             if not data.get("ok"):
                 desc = data.get("description", "").lower()
                 if "chat not found" in desc:
@@ -128,24 +125,35 @@ async def check_username(session, username):
         LAST_SERVER_RESPONSE = f"Ошибка сети @{clean_username}: {e}"
         return False
 
-async def generate_and_check(target):
+async def generate_and_check(target=10, length_option=6):
     pool = {}
-    attempts = max(4000, target * 1200)
+    attempts = max(8000, target * 1500)
+
+    # Определяем нужную длину или диапазон
+    if isinstance(length_option, int):
+        lengths = [length_option]
+        weights = [100]
+    elif length_option == "8_10":
+        lengths = [8, 9, 10]
+        weights = [40, 35, 25]
+    else:
+        lengths = [6]
+        weights = [100]
 
     for _ in range(attempts):
-        length = random.choices([5, 6, 7, 8, 9], weights=[18, 30, 26, 16, 10])[0]
+        length = random.choices(lengths, weights=weights)[0]
         s = generate_candidate(length)
-        if not s or not valid_candidate(s):
+        if not s or not valid_candidate(s) or len(s) != length:
             continue
-        score = brand_score(s) + random.uniform(-2.5, 2.5)
+        score = brand_score(s) + random.uniform(-2.0, 2.0)
         pool[s] = max(score, pool.get(s, -999))
 
     ranked = sorted(pool, key=pool.get, reverse=True)
-    check_pool = ranked[:max(150, target * 20)]
+    check_pool = ranked[:max(200, target * 30)]
 
-    connector = aiohttp.TCPConnector(limit=20)
+    connector = aiohttp.TCPConnector(limit=25)
     async with aiohttp.ClientSession(connector=connector) as session:
-        sem = asyncio.Semaphore(12)
+        sem = asyncio.Semaphore(15)
 
         async def one(u):
             async with sem:
