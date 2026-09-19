@@ -1,119 +1,158 @@
 import sqlite3
-from datetime import datetime, timezone
+import time
 
 class Database:
-    def __init__(self, path):
-        self.path = path
-        self.init()
+    def __init__(self, db_path="monosearch.db"):
+        self.db_path = db_path
+        self.init_db()
 
-    def connect(self):
-        return sqlite3.connect(self.path)
+    def get_conn(self):
+        return sqlite3.connect(self.db_path)
 
-    def init(self):
-        with self.connect() as c:
-            c.execute("""CREATE TABLE IF NOT EXISTS users(
-                user_id INTEGER PRIMARY KEY,
-                username TEXT,
-                extra_requests INTEGER NOT NULL DEFAULT 0,
-                premium_until INTEGER NOT NULL DEFAULT 0,
-                daily_used INTEGER NOT NULL DEFAULT 0,
-                daily_date TEXT NOT NULL DEFAULT '',
-                is_banned INTEGER NOT NULL DEFAULT 0
-            )""")
-            c.execute("""CREATE TABLE IF NOT EXISTS searches(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                requested INTEGER NOT NULL,
-                found INTEGER NOT NULL,
-                created_at TEXT NOT NULL
-            )""")
+    def init_db(self):
+        with self.get_conn() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id INTEGER PRIMARY KEY,
+                    username TEXT,
+                    requests_extra INTEGER DEFAULT 0,
+                    premium_until INTEGER DEFAULT 0,
+                    banned INTEGER DEFAULT 0,
+                    free_today_count INTEGER DEFAULT 0,
+                    last_free_date TEXT
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    count INTEGER,
+                    found_count INTEGER,
+                    created_at TEXT
+                )
+            """)
+            conn.commit()
 
-    def ensure_user(self, user_id, username=""):
-        with self.connect() as c:
-            c.execute(
-                "INSERT OR IGNORE INTO users(user_id, username) VALUES(?, ?)",
-                (user_id, username or "")
-            )
-            if username:
-                c.execute("UPDATE users SET username=? WHERE user_id=?", (username, user_id))
+    def ensure_user(self, user_id, username):
+        today = time.strftime("%Y-%m-%d")
+        with self.get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT user_id, free_today_count, last_free_date, banned FROM users WHERE user_id = ?", (user_id,))
+            row = cur.fetchone()
+            if not row:
+                cur.execute(
+                    "INSERT INTO users (user_id, username, requests_extra, premium_until, banned, free_today_count, last_free_date) VALUES (?, ?, 0, 0, 0, 0, ?)",
+                    (user_id, username, today)
+                )
+                conn.commit()
+            else:
+                _, free_count, last_date, banned = row
+                if banned:
+                    return
+                if last_date != today:
+                    cur.execute("UPDATE users SET free_today_count = 0, last_free_date = ?, username = ? WHERE user_id = ?", (today, username, user_id))
+                    conn.commit()
 
-    def _reset_day(self, c, user_id):
-        today = datetime.now(timezone.utc).date().isoformat()
-        row = c.execute("SELECT daily_date FROM users WHERE user_id=?", (user_id,)).fetchone()
-        if not row or row[0] != today:
-            c.execute("UPDATE users SET daily_used=0, daily_date=? WHERE user_id=?", (today, user_id))
-        return today
+    def is_banned(self, user_id):
+        with self.get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT banned FROM users WHERE user_id = ?", (user_id,))
+            row = cur.fetchone()
+            return bool(row and row[0] == 1)
 
     def is_premium(self, user_id):
-        self.ensure_user(user_id)
-        now = int(datetime.now(timezone.utc).timestamp())
-        with self.connect() as c:
-            row = c.execute("SELECT premium_until FROM users WHERE user_id=?", (user_id,)).fetchone()
-            return row and row[0] > now
+        with self.get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT premium_until FROM users WHERE user_id = ?", (user_id,))
+            row = cur.fetchone()
+            if row and row[0] > int(time.time()):
+                return True
+            return False
 
     def consume_request(self, user_id):
-        self.ensure_user(user_id)
-        with self.connect() as c:
-            banned = c.execute("SELECT is_banned FROM users WHERE user_id=?", (user_id,)).fetchone()
-            if banned and banned[0] == 1:
+        with self.get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT requests_extra, free_today_count FROM users WHERE user_id = ?", (user_id,))
+            row = cur.fetchone()
+            if not row:
                 return False
-
-            self._reset_day(c, user_id)
-            extra = c.execute("SELECT extra_requests FROM users WHERE user_id=?", (user_id,)).fetchone()[0]
-            if extra > 0:
-                c.execute("UPDATE users SET extra_requests=extra_requests-1 WHERE user_id=?", (user_id,))
+            extra, free_today = row
+            if free_today < 3:
+                cur.execute("UPDATE users SET free_today_count = free_today_count + 1 WHERE user_id = ?", (user_id,))
+                conn.commit()
                 return True
-            used = c.execute("SELECT daily_used FROM users WHERE user_id=?", (user_id,)).fetchone()[0]
-            if used >= 3:
-                return False
-            c.execute("UPDATE users SET daily_used=daily_used+1 WHERE user_id=?", (user_id,))
-            return True
+            if extra > 0:
+                cur.execute("UPDATE users SET requests_extra = requests_extra - 1 WHERE user_id = ?", (user_id,))
+                conn.commit()
+                return True
+            return False
 
     def add_requests(self, user_id, amount):
-        self.ensure_user(user_id)
-        with self.connect() as c:
-            c.execute("UPDATE users SET extra_requests=extra_requests+? WHERE user_id=?", (amount, user_id))
-
-    def add_requests_by_id(self, user_id, amount):
-        self.ensure_user(user_id)
-        with self.connect() as c:
-            c.execute("UPDATE users SET extra_requests=extra_requests+? WHERE user_id=?", (amount, user_id))
-
-    def toggle_ban(self, user_id):
-        with self.connect() as c:
-            row = c.execute("SELECT is_banned FROM users WHERE user_id=?", (user_id,)).fetchone()
-            if row:
-                new_status = 0 if row[0] == 1 else 1
-                c.execute("UPDATE users SET is_banned=? WHERE user_id=?", (new_status, user_id))
-                return new_status
-        return None
-
-    def get_user(self, user_id):
-        with self.connect() as c:
-            return c.execute("SELECT user_id, username, extra_requests, premium_until, is_banned FROM users WHERE user_id=?", (user_id,)).fetchone()
-
-    def get_all_users(self):
-        with self.connect() as c:
-            return c.execute("SELECT user_id, username, extra_requests, premium_until, is_banned FROM users ORDER BY user_id DESC").fetchall()
+        with self.get_conn() as conn:
+            conn.execute("UPDATE users SET requests_extra = MAX(0, requests_extra + ?) WHERE user_id = ?", (amount, user_id))
+            conn.commit()
 
     def add_premium(self, user_id, days):
-        self.ensure_user(user_id)
-        now = int(datetime.now(timezone.utc).timestamp())
-        with self.connect() as c:
-            current = c.execute("SELECT premium_until FROM users WHERE user_id=?", (user_id,)).fetchone()[0]
-            start = max(current, now)
-            c.execute("UPDATE users SET premium_until=? WHERE user_id=?", (start + days*86400, user_id))
+        now = int(time.time())
+        with self.get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT premium_until FROM users WHERE user_id = ?", (user_id,))
+            row = cur.fetchone()
+            current_prem = row[0] if row and row[0] > now else now
+            new_prem = current_prem + (days * 86400)
+            cur.execute("UPDATE users SET premium_until = ? WHERE user_id = ?", (new_prem, user_id))
+            conn.commit()
 
-    def add_search(self, user_id, requested, found):
-        with self.connect() as c:
-            c.execute(
-                "INSERT INTO searches(user_id,requested,found,created_at) VALUES(?,?,?,?)",
-                (user_id, requested, found, datetime.now(timezone.utc).isoformat())
-            )
+    def revoke_premium(self, user_id):
+        with self.get_conn() as conn:
+            conn.execute("UPDATE users SET premium_until = 0 WHERE user_id = ?", (user_id,))
+            conn.commit()
+
+    def toggle_ban(self, user_id):
+        with self.get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT banned FROM users WHERE user_id = ?", (user_id,))
+            row = cur.fetchone()
+            if row:
+                new_ban = 0 if row[0] == 1 else 1
+                cur.execute("UPDATE users SET banned = ? WHERE user_id = ?", (new_ban, user_id))
+                conn.commit()
+                return new_ban
+        return 0
+
+    def get_user(self, user_id):
+        with self.get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT user_id, username, requests_extra, premium_until, banned FROM users WHERE user_id = ?", (user_id,))
+            return cur.fetchone()
+
+    def get_all_users(self):
+        with self.get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT user_id, username, requests_extra, premium_until, banned FROM users")
+            return cur.fetchall()
+
+    def get_stats(self):
+        with self.get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM users")
+            total_users = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM users WHERE premium_until > ?", (int(time.time()),))
+            prem_users = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM users WHERE banned = 1")
+            banned_users = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM history")
+            total_searches = cur.fetchone()[0]
+            return total_users, prem_users, banned_users, total_searches
+
+    def add_search(self, user_id, count, found_count):
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        with self.get_conn() as conn:
+            conn.execute("INSERT INTO history (user_id, count, found_count, created_at) VALUES (?, ?, ?, ?)", (user_id, count, found_count, now))
+            conn.commit()
 
     def history(self, user_id):
-        with self.connect() as c:
-            return c.execute(
-                "SELECT found,created_at FROM searches WHERE user_id=? ORDER BY id DESC LIMIT 10",
-                (user_id,)
-            ).fetchall()
+        with self.get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT found_count, created_at FROM history WHERE user_id = ? ORDER BY id DESC LIMIT 5", (user_id,))
+            return cur.fetchall()
